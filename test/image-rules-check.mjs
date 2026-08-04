@@ -14,6 +14,7 @@ import {
   pickSource,
   upgradeResolution,
   MIN_SHORT_SIDE,
+  explainSelection,
 } from '../src/core/imageRules.js';
 import { NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES } from './fixtures/site-samples.mjs';
 
@@ -237,6 +238,35 @@ check('srcset 에서 가장 큰 것을 고른다', () => {
     }),
     'https://cdn.test/l.jpg'
   );
+});
+
+
+console.log('\n진단 (explainSelection)');
+
+check('통과한 경우 방법과 장수를 알려준다', () => {
+  const d = explainSelection(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl);
+  assert.equal(d.kept, 8);
+  assert.equal(d.method, '연번 구간');
+  assert.equal(d.total, NAVER_WEBTOON.elements.length);
+});
+
+check('어느 단계가 걸렀는지 집계한다', () => {
+  const d = explainSelection(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl);
+  const names = d.stages.map((s) => s.name);
+  assert.ok(names.includes('이름걸림'), '썸네일·프로필이 이름으로 걸려야 한다');
+  assert.ok(names.includes('크기미달'), '얇은 배너가 크기로 걸려야 한다');
+  assert.ok(names.includes('이미지아님'), 'mp3 가 걸려야 한다');
+  // 각 단계는 예시 주소를 들고 있어야 원인을 알 수 있다
+  for (const s of d.stages) assert.ok(s.samples.length > 0);
+});
+
+check('0장일 때도 이유가 남는다', () => {
+  const d = explainSelection(
+    [{ tag: 'IMG', src: 'https://x.test/logo.png', naturalWidth: 40, naturalHeight: 40 }],
+    'https://x.test/'
+  );
+  assert.equal(d.kept, 0);
+  assert.ok(d.stages.length > 0);
 });
 
 console.log(`\n${passed}개 통과`);

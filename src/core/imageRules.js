@@ -29,7 +29,9 @@ export const MIN_SERIES_LENGTH = 3;
  * 둘을 같이 쓴다.
  */
 export const JUNK_PATTERN =
-  /logo|icon|banner|button|avatar|thumb|captcha|loading|spinner|notice|emoji|smil|sns|ad[_-]|advert|google|facebook|twitter|kakao|naver_|profile|blank\.|1x1|pixel|copyright|wordmark|poweredby|sprite|footer|header|gestalt|illustration|\/static\//i;
+  // `ad[_-]` 앞의 (?<![a-z]) 가 중요하다. 없으면 upload_ · download_ · road- 를
+  // 광고로 오인한다 (네이버 작가 배너 upload_427.JPEG 가 그렇게 잘못 걸렸다).
+  /logo|icon|banner|button|avatar|thumb|captcha|loading|spinner|notice|emoji|smil|sns|(?<![a-z])ad[_-]|advert|google|facebook|twitter|kakao|naver_|profile|blank\.|1x1|pixel|copyright|wordmark|poweredby|sprite|footer|header|gestalt|illustration|\/static\//i;
 
 /** 이미지가 아닌 게 확실한 확장자. <source> 태그로 오디오·비디오가 섞여 들어온다 */
 export const NOT_IMAGE_EXT = /\.(mp3|mp4|m4a|webm|ogg|wav|avi|mov|js|css|json|xml)(\?|#|$)/i;
@@ -143,7 +145,7 @@ export function upgradeResolution(url) {
  *   20260706_abc_IMAG01_7.jpg -> dir + "…_IMAG01_#.jpg" 번호 7
  *   a1b2c3d4.jpg              -> 번호 없음 (해시 파일명)
  */
-function parseSeriesKey(url) {
+export function parseSeriesKey(url) {
   const clean = url.split('?')[0].split('#')[0];
   const slash = clean.lastIndexOf('/');
   const dir = clean.slice(0, slash + 1);
@@ -227,6 +229,86 @@ export function keepDominantDirectory(urls) {
   }
 
   return best.length >= 3 && best.length >= urls.length * 0.5 ? best : urls;
+}
+
+/**
+ * 왜 이 이미지가 빠졌는지 설명한다.
+ *
+ * 사이트가 안 잡힐 때 개발자도구를 열지 않고 원인을 찾기 위한 것이다.
+ * selectContentImages 와 같은 순서로 판정하며 단계별로 몇 개가 빠졌는지 센다.
+ * 규칙을 두 번 구현하지 않으려고 같은 함수들을 쓴다.
+ */
+export function explainSelection(elements, baseUrl) {
+  const stages = {
+    노소스: [],
+    주소불가: [],
+    이미지아님: [],
+    이름걸림: [],
+    크기미달: [],
+    중복: [],
+  };
+  const seen = {};
+  const picked = [];
+
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
+    const label = (el.src || el.dataSrc || el.dataOriginal || '(빈 요소)').slice(0, 90);
+
+    const raw = pickSource(el);
+    if (!raw) {
+      stages['노소스'].push(label);
+      continue;
+    }
+    const abs = absolutize(raw, baseUrl);
+    if (!abs) {
+      stages['주소불가'].push(label);
+      continue;
+    }
+    if (NOT_IMAGE_EXT.test(abs)) {
+      stages['이미지아님'].push(abs);
+      continue;
+    }
+    if (JUNK_PATTERN.test(abs)) {
+      stages['이름걸림'].push(abs);
+      continue;
+    }
+    if (!isBigEnough(el)) {
+      const w = el.naturalWidth || el.offsetWidth || el.width || '?';
+      const h = el.naturalHeight || el.offsetHeight || el.height || '?';
+      stages['크기미달'].push(`${abs}  (${w}x${h})`);
+      continue;
+    }
+    const url = upgradeResolution(abs);
+    if (seen[url]) {
+      stages['중복'].push(url);
+      continue;
+    }
+    seen[url] = 1;
+    picked.push(url);
+  }
+
+  const series = findNumberedSeries(picked);
+  const final = series || keepDominantDirectory(picked);
+  const finalSet = {};
+  for (let i = 0; i < final.length; i++) finalSet[final[i]] = 1;
+
+  const groupedOut = picked.filter((u) => !finalSet[u]);
+  const groupStage = series ? '연번구간밖' : '다른폴더';
+
+  return {
+    total: elements.length,
+    kept: final.length,
+    method: series ? '연번 구간' : picked.length === final.length ? '전부 통과' : '디렉터리 다수결',
+    stages: [
+      ...Object.keys(stages)
+        .filter((k) => stages[k].length > 0)
+        .map((k) => ({ name: k, dropped: stages[k].length, samples: stages[k].slice(0, 4) })),
+      ...(groupedOut.length
+        ? [{ name: groupStage, dropped: groupedOut.length, samples: groupedOut.slice(0, 4) }]
+        : []),
+    ],
+    urls: final,
+  };
 }
 
 /**

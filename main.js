@@ -107,15 +107,27 @@ const el = {
 
 function loadSettings() {
   try {
-    return { ...defaultSettings, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    // mode 는 저장하지 않는다 (아래 saveSettings 주석 참고). 예전에 저장된 값도 무시한다.
+    delete saved.mode;
+    return { ...defaultSettings, ...saved };
   } catch {
     return { ...defaultSettings };
   }
 }
 
+/**
+ * 보기 모드(mode)는 저장하지 않는다.
+ *
+ * 저장했더니 함정이 됐다. 만화책 한 화를 보려고 "한 장"을 한 번 고르면
+ * 그 뒤로 웹툰이 계속 페이지 넘김으로 떠서 "고장난 것"처럼 보였다.
+ * auto 는 이미지 비율을 보고 옳게 고르니, 새 콘텐츠는 항상 auto 로 시작한다.
+ * 수동 선택은 그 챕터를 보는 동안만 유효하다.
+ */
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+    const { mode, ...persisted } = state.settings;
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(persisted));
   } catch {
     /* 사파리 프라이빗 모드 등에서는 저장을 포기한다 */
   }
@@ -233,6 +245,10 @@ function addChapter(harvested, idPrefix) {
   chapter.nextUrl = harvested.nextUrl || null;
 
   if (!existing) state.chapters.unshift(chapter);
+
+  // 새로 불러온 콘텐츠는 항상 auto 로 본다. 앞 챕터에서 고른 모드를 물려받으면
+  // 웹툰이 페이지 넘김으로 뜨는 식으로 깨진다.
+  resetModeToAuto();
 
   openChapter(chapter.id, 1);
   return chapter;
@@ -425,6 +441,14 @@ function markSegmented(group, attr, value) {
   });
 }
 
+/** 보기 모드를 auto 로 되돌리고 세그먼트 표시도 맞춘다 */
+function resetModeToAuto() {
+  if (state.settings.mode === 'auto') return;
+  state.settings.mode = 'auto';
+  markSegmented(el.modeGroup, 'mode', 'auto');
+  if (engine) engine.setMode('auto');
+}
+
 function applyPaper(paper) {
   el.viewport.classList.remove('filter-sepia', 'filter-contrast', 'filter-night');
   if (paper && paper !== 'none') el.viewport.classList.add(`filter-${paper}`);
@@ -438,6 +462,20 @@ function applyBrightness(value) {
 /* ==================================================================== */
 /* 불러오기                                                              */
 /* ==================================================================== */
+
+/**
+ * 선별 진단을 사람이 읽을 한 덩어리로 만든다.
+ * 예: "이미지 140개 중 0장 남음 — 크기미달 118, 이름걸림 22"
+ */
+function formatDiagnosis(diagnosis) {
+  if (!diagnosis) return '';
+
+  const summary = `\n\n이미지 ${diagnosis.total}개 중 ${diagnosis.kept}장 남음`;
+  if (diagnosis.stages.length === 0) return summary;
+
+  const breakdown = diagnosis.stages.map((s) => `${s.name} ${s.dropped}`).join(' · ');
+  return `${summary}\n제외: ${breakdown}`;
+}
 
 /** 붙여넣은 게 "페이지 주소 하나"인지 "이미지 주소 목록"인지 스스로 판단한다 */
 function looksLikeSinglePageUrl(text) {
@@ -466,7 +504,10 @@ async function submitImport() {
       closeModal(el.modalImport);
       toast(`${harvested.pages.length}장 불러왔습니다.`);
     } catch (err) {
-      toast(err.message, { error: true });
+      // 진단이 실려 왔으면 어느 필터가 걸렀는지 같이 보여준다.
+      // 이게 있으면 사이트가 안 잡힐 때 개발자도구를 열 필요가 없다.
+      toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
+      if (err.diagnosis) console.table?.(err.diagnosis.stages);
     } finally {
       setBusy(false);
     }

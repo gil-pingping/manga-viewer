@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/image-rules-check.mjs && node test/harvester-check.mjs"
+    "test": "node test/image-rules-check.mjs && node test/bookmarklet-check.mjs && node test/harvester-check.mjs"
   },
   "devDependencies": {
     "vite": "^8.2.0"
