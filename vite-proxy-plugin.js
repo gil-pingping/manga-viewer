@@ -69,7 +69,19 @@ function readBody(req) {
  * 공용 프록시로 악용해 사설망(공유기 관리 페이지 등)을 찔러볼 수 있으므로
  * 사설/루프백 대역과 http(s) 이외 스킴은 막는다.
  */
-function assertFetchableUrl(rawUrl) {
+/**
+ * 요청이 이 기기 자신에서 왔는가.
+ *
+ * 기기 앞에 앉은 사람은 자기 로컬 테스트 사이트를 가리킬 수 있어야 한다.
+ * 반면 같은 와이파이의 다른 사람은 이 프록시로 사설망을 찔러볼 수 없어야 한다.
+ * 그 둘을 가르는 기준이 "요청자가 루프백인가" 다.
+ */
+export function isLoopbackRequester(req) {
+  const addr = (req.socket && req.socket.remoteAddress) || '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+export function assertFetchableUrl(rawUrl, allowPrivate) {
   let parsed;
   try {
     parsed = new URL(rawUrl);
@@ -97,8 +109,11 @@ function assertFetchableUrl(rawUrl) {
     /^f[cd][0-9a-f]{2}:/.test(host) ||
     /^fe80:/.test(host);
 
-  if (isBlockedHost) {
-    throw new Error('사설망 주소는 가져올 수 없습니다.');
+  if (isBlockedHost && !allowPrivate) {
+    throw new Error(
+      '사설망 주소는 가져올 수 없습니다. ' +
+        '로컬 테스트 사이트라면 이 기기(localhost)에서 뷰어를 열고 시도하세요.'
+    );
   }
 
   return parsed;
@@ -214,7 +229,7 @@ export default function mangaProxyPlugin() {
         }
 
         try {
-          const parsed = assertFetchableUrl(targetUrl);
+          const parsed = assertFetchableUrl(targetUrl, isLoopbackRequester(req));
           const response = await upstreamFetch(parsed.href, {
             'User-Agent': BROWSER_UA,
             Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -258,7 +273,7 @@ export default function mangaProxyPlugin() {
         }
 
         try {
-          const parsed = assertFetchableUrl(targetUrl);
+          const parsed = assertFetchableUrl(targetUrl, isLoopbackRequester(req));
 
           // 이미지 CDN은 보통 "만화를 읽던 그 페이지"를 Referer 로 기대한다.
           let referer = parsed.origin + '/';
