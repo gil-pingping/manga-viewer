@@ -111,16 +111,45 @@ function collectManga(viewerOrigin) {
       seen[url] = 1;
       out.push(url);
     }
-    return out;
+    return keepDominantDirectory(out);
+  }
+
+  /**
+   * 한 화의 컷들은 거의 항상 같은 디렉터리에 연번으로 올라간다.
+   * 그 최다 묶음만 남기면 프로모·커뮤니티 이미지가 한 번에 걸러진다
+   * (네이버 웹툰에서 102장 중 본문 97장 / 잡동사니 5장으로 확인).
+   * 뚜렷한 다수가 없으면 손대지 않는다.
+   */
+  function keepDominantDirectory(urls) {
+    if (urls.length < 4) return urls;
+
+    var groups = {};
+    for (var i = 0; i < urls.length; i++) {
+      var dir = urls[i].slice(0, urls[i].lastIndexOf('/') + 1);
+      (groups[dir] = groups[dir] || []).push(urls[i]);
+    }
+
+    var keys = Object.keys(groups);
+    if (keys.length < 2) return urls;
+
+    var best = [];
+    for (var k = 0; k < keys.length; k++) {
+      if (groups[keys[k]].length > best.length) best = groups[keys[k]];
+    }
+
+    return best.length >= 3 && best.length >= urls.length * 0.5 ? best : urls;
   }
 
   function findLink(re) {
+    // 해시만 다른 자기 자신 링크(#none 등)는 "다음화"가 아니다
+    var here = location.href.split('#')[0];
     var anchors = document.querySelectorAll('a[href]');
     for (var i = 0; i < anchors.length; i++) {
-      var text = (anchors[i].textContent || '').trim();
-      if (re.test(text) || re.test(anchors[i].getAttribute('rel') || '')) {
-        return anchors[i].href;
-      }
+      var a = anchors[i];
+      var text = (a.textContent || '').trim();
+      if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
+      if (a.href.split('#')[0] === here) continue;
+      return a.href;
     }
     return null;
   }
