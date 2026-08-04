@@ -202,8 +202,68 @@ export function findNumberedSeries(urls) {
 }
 
 /**
+ * 파일명을 "모양"으로 바꾼다. 숫자는 #, 16진수 뭉치는 x, 나머지는 그대로.
+ *
+ *   004439_45ed7219c6cc.png  ->  #_x.png
+ *   075431_ee52d4c3d337.png  ->  #_x.png     (같은 모양)
+ *   logo_newtoki.png         ->  logo_newtoki.png
+ *   logo-full-manatoki3.png  ->  logo-full-manatoki#.png
+ *
+ * 업로더가 같은 규칙으로 뽑아낸 파일들은 모양이 같다. 사이트 로고·배너는
+ * 사람이 붙인 이름이라 모양이 다르다. 그게 이 규칙의 근거다.
+ */
+export function filenameShape(url) {
+  const clean = url.split('?')[0].split('#')[0];
+  const file = clean.slice(clean.lastIndexOf('/') + 1);
+
+  return (
+    file
+      // 16진수처럼 보이는 긴 뭉치를 먼저 접는다 (해시·UUID 조각)
+      .replace(/[0-9a-f]{8,}/gi, 'x')
+      // 남은 숫자 뭉치를 접는다
+      .replace(/\d+/g, '#')
+  );
+}
+
+/**
+ * 같은 폴더 + 같은 파일명 모양의 최다 묶음을 찾는다.
+ *
+ * 연번이 아닌 사이트를 위한 규칙이다. 실제로 본 예: 본문 파일명이
+ * `시각_해시.png` 형태로 수십 장 이어지고, 그 위에 로고 몇 개가 얹혀 있다.
+ * 번호가 이어지지 않으니 findNumberedSeries 로는 못 잡지만 모양은 똑같다.
+ *
+ * 문서 순서를 유지한다 — 모양만 같고 번호가 없으면 정렬 근거가 없으므로
+ * 페이지에 실린 순서를 믿는 것이 맞다.
+ */
+export function findDominantShape(urls) {
+  if (urls.length < 4) return null;
+
+  const groups = {};
+  const order = [];
+  for (let i = 0; i < urls.length; i++) {
+    const dir = urls[i].slice(0, urls[i].lastIndexOf('/') + 1);
+    const key = dir + '|' + filenameShape(urls[i]);
+    if (!groups[key]) {
+      groups[key] = [];
+      order.push(key);
+    }
+    groups[key].push(urls[i]);
+  }
+  if (order.length < 2) return null;
+
+  let best = [];
+  for (let i = 0; i < order.length; i++) {
+    if (groups[order[i]].length > best.length) best = groups[order[i]];
+  }
+
+  // 절반까지는 요구하지 않는다. 잡동사니가 많이 섞인 페이지에서도
+  // 뚜렷한 한 덩어리면 그게 본문이다.
+  return best.length >= 3 && best.length > urls.length * 0.3 ? best : null;
+}
+
+/**
  * 한 화의 컷들은 같은 디렉터리에 몰려 있다.
- * 연번을 못 찾았을 때 쓰는 차선책.
+ * 연번·모양을 못 찾았을 때 쓰는 마지막 차선책.
  *
  * 뚜렷한 다수가 없으면 손대지 않는다. Pinterest 처럼 항목마다 디렉터리가
  * 다른 사이트에서는 이 규칙이 아무것도 하지 않아야 한다.
@@ -288,17 +348,24 @@ export function explainSelection(elements, baseUrl) {
   }
 
   const series = findNumberedSeries(picked);
-  const final = series || keepDominantDirectory(picked);
+  const shaped = series ? null : findDominantShape(picked);
+  const final = series || shaped || keepDominantDirectory(picked);
+
   const finalSet = {};
   for (let i = 0; i < final.length; i++) finalSet[final[i]] = 1;
 
   const groupedOut = picked.filter((u) => !finalSet[u]);
-  const groupStage = series ? '연번구간밖' : '다른폴더';
+  const groupStage = series ? '연번구간밖' : shaped ? '다른모양' : '다른폴더';
+
+  let method = '전부 통과';
+  if (series) method = '연번 구간';
+  else if (shaped) method = '파일명 모양';
+  else if (picked.length !== final.length) method = '디렉터리 다수결';
 
   return {
     total: elements.length,
     kept: final.length,
-    method: series ? '연번 구간' : picked.length === final.length ? '전부 통과' : '디렉터리 다수결',
+    method,
     stages: [
       ...Object.keys(stages)
         .filter((k) => stages[k].length > 0)
@@ -338,6 +405,9 @@ export function selectContentImages(elements, baseUrl) {
     picked.push(url);
   }
 
-  // 연번이 본문의 가장 확실한 지문이다. 없으면 디렉터리 다수결로 물러난다.
-  return findNumberedSeries(picked) || keepDominantDirectory(picked);
+  // 확실한 순서대로 시도한다:
+  //  1) 연번      p001.jpg 처럼 번호가 이어진다 (페이지 순서까지 얻는다)
+  //  2) 파일명 모양  시각_해시.png 처럼 업로더가 같은 규칙으로 뽑은 덩어리
+  //  3) 디렉터리   그냥 같은 폴더에 몰려 있다
+  return findNumberedSeries(picked) || findDominantShape(picked) || keepDominantDirectory(picked);
 }

@@ -23,6 +23,8 @@ const BUNDLED = [
   rules.upgradeResolution,
   rules.parseSeriesKey, // findNumberedSeries 가 쓴다 — 빠지면 페이지에서 ReferenceError
   rules.findNumberedSeries,
+  rules.filenameShape, // findDominantShape 가 쓴다
+  rules.findDominantShape,
   rules.keepDominantDirectory,
   rules.selectContentImages,
   dom.toDescriptor,

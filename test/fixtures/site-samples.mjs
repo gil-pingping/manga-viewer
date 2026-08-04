@@ -145,4 +145,36 @@ export const AD_SHAPES = {
   ],
 };
 
-export const ALL_FIXTURES = [NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES];
+/* ==================================================================== */
+/* 파일명 모양이 같은 덩어리 — 연번이 아닌 사이트                          */
+/*                                                                      */
+/* 관찰한 구조: 사이트 로고 몇 개가 맨 위에 얹혀 있고, 그 아래로 본문이     */
+/* `시각_해시.png` 형태로 수십 장 이어진다. 번호가 이어지지 않으므로       */
+/* 연번 규칙으로는 못 잡지만 파일명 모양은 전부 같다.                      */
+/* ==================================================================== */
+
+const SHAPED_DIR = 'https://cdn.example.test/data/file/ch7/';
+
+export const SHAPED_GALLERY = {
+  label: '파일명 모양 덩어리',
+  pageUrl: 'https://example.test/viewer/ch7',
+  origin: 'https://example.test',
+  elements: [
+    // 위에 얹힌 잡동사니 — 모양이 제각각이라 본문 덩어리에 안 들어간다
+    img(`${SHAPED_DIR}20200905121520_569fea0a48cbcf5c8fc05f2751f2a7df_7foy.png`, 800, 1200, false, '단발 타임스탬프 파일'),
+    img('https://cdn.example.test/img/logo_site.png', 240, 240, false, '사이트 로고'),
+    img('https://cdn.example.test/img/logo-full-brand3.png', 300, 200, false, '풀 로고'),
+
+    // 본문 — 전부 ######_x.png 모양
+    img(`${SHAPED_DIR}004439_45ed7219c6cc.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}075431_ee52d4c3d337.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}160327_eae99af2850b.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}094850_f134c97180c8.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}095623_59373b2a8673.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}010227_d6d5236625f1.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}095553_f25f189cfbfb.png`, 800, 1200, true, '본문'),
+    img(`${SHAPED_DIR}103834_7504bccdcf26.png`, 800, 1200, true, '본문'),
+  ],
+};
+
+export const ALL_FIXTURES = [NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES, SHAPED_GALLERY];

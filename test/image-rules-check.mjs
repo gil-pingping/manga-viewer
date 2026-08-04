@@ -15,8 +15,15 @@ import {
   upgradeResolution,
   MIN_SHORT_SIDE,
   explainSelection,
+  filenameShape,
+  findDominantShape,
 } from '../src/core/imageRules.js';
-import { NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES } from './fixtures/site-samples.mjs';
+import {
+  NAVER_WEBTOON,
+  PINTEREST_GRID,
+  AD_SHAPES,
+  SHAPED_GALLERY,
+} from './fixtures/site-samples.mjs';
 
 let passed = 0;
 function check(name, fn) {
@@ -267,6 +274,59 @@ check('0장일 때도 이유가 남는다', () => {
   );
   assert.equal(d.kept, 0);
   assert.ok(d.stages.length > 0);
+});
+
+console.log('\n파일명 모양 덩어리 (연번이 아닌 사이트)');
+
+check('로고가 위에 얹혀도 본문 덩어리만 남는다', () => {
+  const r = auditFixture(SHAPED_GALLERY);
+  assert.deepEqual(r.missing.map((e) => e.note), [], '본문인데 빠진 것이 있다');
+  assert.deepEqual(r.leaked, [], '본문이 아닌데 섞인 것이 있다');
+  assert.equal(r.got.length, 8);
+});
+
+check('선별 방법으로 "파일명 모양"이 보고된다', () => {
+  const d = explainSelection(SHAPED_GALLERY.elements, SHAPED_GALLERY.pageUrl);
+  assert.equal(d.method, '파일명 모양');
+  assert.equal(d.kept, 8);
+});
+
+check('숫자와 해시를 접어 같은 모양으로 본다', () => {
+  const a = filenameShape('https://x.test/d/004439_45ed7219c6cc.png');
+  const b = filenameShape('https://x.test/d/075431_ee52d4c3d337.png');
+  assert.equal(a, b);
+  assert.notEqual(a, filenameShape('https://x.test/d/logo_site.png'));
+});
+
+check('모양이 제각각이면 null (규칙이 개입하지 않는다)', () => {
+  assert.equal(
+    findDominantShape([
+      'https://x.test/a/logo.png',
+      'https://x.test/a/banner-top.jpg',
+      'https://x.test/a/photo.webp',
+      'https://x.test/a/hero.gif',
+    ]),
+    null
+  );
+});
+
+check('연번이 있으면 연번이 우선한다 (모양 규칙보다)', () => {
+  // p001~p004 는 모양도 같지만, 번호가 있으면 정렬까지 얻으므로 연번을 쓴다
+  const els = [
+    { src: 'https://x.test/c/p003.jpg', naturalWidth: 800, naturalHeight: 1200 },
+    { src: 'https://x.test/c/p001.jpg', naturalWidth: 800, naturalHeight: 1200 },
+    { src: 'https://x.test/c/p004.jpg', naturalWidth: 800, naturalHeight: 1200 },
+    { src: 'https://x.test/c/p002.jpg', naturalWidth: 800, naturalHeight: 1200 },
+  ];
+  const d = explainSelection(els, 'https://x.test/');
+  assert.equal(d.method, '연번 구간');
+  assert.deepEqual(d.urls.map((u) => u.split('/').pop()), ['p001.jpg', 'p002.jpg', 'p003.jpg', 'p004.jpg']);
+});
+
+check('모양 규칙이 네이버·Pinterest 결과를 바꾸지 않는다', () => {
+  assert.equal(selectContentImages(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl).length, 8);
+  assert.equal(selectContentImages(PINTEREST_GRID.elements, PINTEREST_GRID.pageUrl).length, 7);
+  assert.equal(explainSelection(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl).method, '연번 구간');
 });
 
 console.log(`\n${passed}개 통과`);

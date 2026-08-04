@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { buildBookmarklet, BUNDLED, bundledConstants } from '../src/collector.js';
 import { selectContentImages } from '../src/core/imageRules.js';
-import { NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES } from './fixtures/site-samples.mjs';
+import { ALL_FIXTURES } from './fixtures/site-samples.mjs';
 
 let passed = 0;
 function check(name, fn) {
@@ -82,7 +82,7 @@ function reviveSelectFromBookmarklet() {
 
 const revived = reviveSelectFromBookmarklet();
 
-for (const fixture of [NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES]) {
+for (const fixture of ALL_FIXTURES) {
   check(`${fixture.label}: 두 경로 결과가 같다`, () => {
     const fromCore = selectContentImages(fixture.elements, fixture.pageUrl);
     const fromBookmarklet = revived(fixture.elements, fixture.pageUrl);
