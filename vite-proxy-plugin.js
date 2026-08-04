@@ -104,12 +104,36 @@ function assertFetchableUrl(rawUrl) {
   return parsed;
 }
 
-function upstreamFetch(url, headers) {
-  return fetch(url, {
-    headers,
-    redirect: 'follow',
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
+/**
+ * 상류 요청. 한 번은 다시 시도한다.
+ *
+ * 사이트가 순간적으로 거절하거나(연속 요청 시 흔하다) 타임아웃 한 번 났다고
+ * 사용자에게 "실패"를 띄우면 앱이 고장난 것처럼 보인다. 실제로 네이버 웹툰에서
+ * 같은 페이지를 반복 요청하다 502 를 한 번 맞았고, 곧바로 다시 하면 200 이었다.
+ */
+async function upstreamFetch(url, headers) {
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 700));
+    try {
+      const res = await fetch(url, {
+        headers,
+        redirect: 'follow',
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      // 5xx 는 재시도할 가치가 있다. 4xx 는 다시 해도 같은 답이 온다.
+      if (res.status >= 500 && attempt === 0) {
+        lastErr = new Error(`상류 ${res.status}`);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr || new Error('상류 요청 실패');
 }
 
 export default function mangaProxyPlugin() {
@@ -171,6 +195,49 @@ export default function mangaProxyPlugin() {
           sendJson(res, 200, { ok: true, count: cleanPages.length });
         } catch (err) {
           sendJson(res, 400, { ok: false, error: err.message });
+        }
+      });
+
+      /* ---------------------------------------------------------------- */
+      /* 페이지 HTML 가져오기                                              */
+      /*                                                                  */
+      /* 서버가 대신 받아오므로 CORS·CSP 를 타지 않는다. 네이버 웹툰처럼    */
+      /* 본문 이미지 주소가 HTML 에 그대로 있는 사이트는 이것만으로 끝난다. */
+      /* ---------------------------------------------------------------- */
+      server.middlewares.use('/api/fetch-page', async (req, res) => {
+        if (handlePreflight(req, res)) return;
+
+        const targetUrl = new URL(req.url, 'http://localhost').searchParams.get('url');
+        if (!targetUrl) {
+          sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
+          return;
+        }
+
+        try {
+          const parsed = assertFetchableUrl(targetUrl);
+          const response = await upstreamFetch(parsed.href, {
+            'User-Agent': BROWSER_UA,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.5',
+            Referer: parsed.origin + '/',
+          });
+
+          if (!response.ok) {
+            sendJson(res, 502, {
+              ok: false,
+              error: `사이트가 ${response.status} 응답을 반환했습니다.`,
+            });
+            return;
+          }
+
+          const html = await response.text();
+          res.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(html);
+        } catch (err) {
+          sendJson(res, 502, { ok: false, error: err.message });
         }
       });
 

@@ -148,46 +148,38 @@
 
         <div class="sheet-body">
           <section class="block">
-            <div class="block-head">
-              <span class="step-num">1</span>
-              <div>
-                <h3>북마클릿 (가장 확실함)</h3>
-                <p class="hint">브라우저에서 보던 페이지의 이미지를 그대로 이 뷰어로 넘긴다. 이미지를 나중에 채우는 사이트에서도 동작한다.</p>
-              </div>
-            </div>
+            <label class="label" for="raw-input">주소 붙여넣기</label>
+            <textarea id="raw-input" class="field" rows="3"
+              placeholder="https://comic.naver.com/webtoon/detail?titleId=…&amp;no=249"
+              spellcheck="false" autocomplete="off"></textarea>
+            <p class="hint">
+              웹툰·만화 <b>페이지 주소</b>를 그대로 넣으면 알아서 컷을 찾아온다.
+              이미지 주소를 여러 줄로 붙여도 된다.
+            </p>
+          </section>
 
+          <details class="fallback">
+            <summary>주소로 안 잡히는 사이트라면 (북마클릿)</summary>
+            <p class="hint">
+              이미지를 자바스크립트로 나중에 채우는 사이트는 서버가 받는 HTML 에 주소가 없다.
+              그때는 브라우저에서 보던 화면을 그대로 넘기는 북마클릿을 쓴다.
+            </p>
             <ol class="steps">
-              <li>북마크바를 켠다 (맥 크롬·사파리: <b>⌘⇧B</b>).</li>
-              <li>아래 파란 딱지를 <b>북마크바로 끌어다 놓는다</b>.</li>
-              <li>웹툰·이미지 페이지에서 끝까지 스크롤한 뒤 그 북마크를 누른다.</li>
+              <li>북마크바를 켠다 (맥: <b>⌘⇧B</b>).</li>
+              <li>아래 딱지를 <b>북마크바로 끌어다 놓는다</b>.</li>
+              <li>그 페이지에서 끝까지 스크롤한 뒤 북마크를 누른다.</li>
             </ol>
-
             <a class="drag-chip" id="bookmarklet-drag" href="#" draggable="true">
               <svg class="ico"><use href="#i-link"/></svg><span>만화 뷰어로 보내기</span>
             </a>
-
-            <details class="fallback">
-              <summary>끌어다 놓기가 안 되면 (주소 직접 복사)</summary>
-              <div class="row">
-                <input type="text" id="bookmarklet-url" class="field mono" readonly>
-                <button class="btn" id="btn-copy-bookmarklet" type="button">
-                  <svg class="ico"><use href="#i-copy"/></svg><span>주소 복사</span>
-                </button>
-              </div>
-              <p class="hint">북마크를 새로 만들고 <b>주소(URL)</b> 칸에 붙여넣기. 주소창에 붙이면 사파리가 <code>javascript:</code>를 지운다.</p>
-            </details>
-          </section>
-
-          <section class="block">
-            <div class="block-head">
-              <span class="step-num">2</span>
-              <div>
-                <h3>이미지 주소 붙여넣기</h3>
-                <p class="hint">이미지 주소를 한 줄에 하나씩. 순서대로 페이지가 된다.</p>
-              </div>
+            <div class="row">
+              <input type="text" id="bookmarklet-url" class="field mono" readonly>
+              <button class="btn" id="btn-copy-bookmarklet" type="button">
+                <svg class="ico"><use href="#i-copy"/></svg><span>주소 복사</span>
+              </button>
             </div>
-            <textarea id="raw-input" class="field" rows="4" placeholder="https://…/001.webp&#10;https://…/002.webp" spellcheck="false"></textarea>
-          </section>
+            <p class="hint">직접 복사할 땐 북마크의 <b>주소(URL)</b> 칸에 붙여넣기. 주소창에 붙이면 사파리가 <code>javascript:</code>를 지운다.</p>
+          </details>
         </div>
 
         <div class="sheet-foot">

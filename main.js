@@ -204,9 +204,9 @@ function openChapter(chapterId, pageNumber) {
   el.title.textContent = chapter.title || '만화 뷰어';
   el.chapter.textContent = chapter.label || '';
 
-  const idx = currentIndex();
-  el.btnPrevEp.disabled = idx <= 0 && !chapter.prevUrl;
-  el.btnNextEp.disabled = idx >= state.chapters.length - 1 && !chapter.nextUrl;
+  // currentId 를 먼저 세운 뒤에 판정해야 hasAdjacent 가 올바른 위치를 본다
+  el.btnPrevEp.disabled = !hasAdjacent(-1);
+  el.btnNextEp.disabled = !hasAdjacent(1);
 
   const startAt = pageNumber ?? readProgress()[chapter.id] ?? 1;
   engine.loadChapter(chapter, startAt);
@@ -239,28 +239,51 @@ function addChapter(harvested, idPrefix) {
 }
 
 /**
- * 인접 화로 이동.
- *
- * 목록에 없는 화는 서버가 대신 긁어올 수 없다 (이미지가 HTML에 없는 사이트가 대부분).
- * 그래서 그 화를 새 탭으로 열어주고, 거기서 북마클릿을 한 번 더 누르게 한다.
+ * 목록에서 데모가 아닌 이웃 챕터.
+ * 불러온 챕터는 목록 맨 앞에 꽂히므로 단순히 idx+1 을 쓰면 데모로 새어나간다.
  */
-function goChapter(delta) {
-  const idx = currentIndex();
-  const target = state.chapters[idx + delta];
-
-  if (target) {
-    openChapter(target.id);
-    return;
+function realNeighbor(delta) {
+  for (let i = currentIndex() + delta; i >= 0 && i < state.chapters.length; i += delta) {
+    if (!state.chapters[i].isDemo) return state.chapters[i];
   }
+  return null;
+}
 
+function hasAdjacent(delta) {
   const url = delta > 0 ? currentChapter().nextUrl : currentChapter().prevUrl;
-  if (!url) {
-    toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
+  return !!url || !!realNeighbor(delta);
+}
+
+/**
+ * 인접 화로 이동.
+ * 사이트의 이전/다음 링크가 있으면 그게 진짜 인접 화다 — 서버가 받아온다.
+ * 없으면 이미 불러둔 챕터 중에서 찾는다.
+ */
+async function goChapter(delta) {
+  const url = delta > 0 ? currentChapter().nextUrl : currentChapter().prevUrl;
+
+  if (url) {
+    try {
+      setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
+      const harvested = await UrlHarvester.fetchFromUrl(url);
+      addChapter(harvested, 'import');
+      toast(`${harvested.pages.length}장 불러왔습니다.`);
+      return;
+    } catch (err) {
+      toast(err.message, { error: true });
+      return;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const neighbor = realNeighbor(delta);
+  if (neighbor) {
+    openChapter(neighbor.id);
     return;
   }
 
-  window.open(url, '_blank');
-  toast('그 화를 새 탭에서 열었습니다. 거기서 북마클릿을 누르세요.', { duration: 5000 });
+  toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
 }
 
 /* ==================================================================== */
@@ -416,14 +439,41 @@ function applyBrightness(value) {
 /* 불러오기                                                              */
 /* ==================================================================== */
 
-function submitImport() {
+/** 붙여넣은 게 "페이지 주소 하나"인지 "이미지 주소 목록"인지 스스로 판단한다 */
+function looksLikeSinglePageUrl(text) {
+  const lines = text.split(/\s+/).filter(Boolean);
+  if (lines.length !== 1) return false;
+  if (!/^https?:\/\//i.test(lines[0])) return false;
+  // 확장자가 이미지면 그건 페이지가 아니라 이미지 한 장이다
+  return !/\.(jpe?g|png|gif|webp|avif|bmp)(\?|#|$)/i.test(lines[0]);
+}
+
+async function submitImport() {
   const raw = el.rawInput.value.trim();
 
   if (!raw) {
-    toast('이미지 주소를 붙여넣어 주세요.', { error: true });
+    toast('주소를 붙여넣어 주세요.', { error: true });
     return;
   }
 
+  // 페이지 주소 하나 → 서버가 HTML 받아 컷을 찾아온다 (북마클릿 불필요)
+  if (looksLikeSinglePageUrl(raw)) {
+    try {
+      setBusy(true, '페이지에서 만화 찾는 중…');
+      const harvested = await UrlHarvester.fetchFromUrl(raw);
+      addChapter(harvested, 'import');
+      el.rawInput.value = '';
+      closeModal(el.modalImport);
+      toast(`${harvested.pages.length}장 불러왔습니다.`);
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+    return;
+  }
+
+  // 그 밖에는 이미지 주소 목록으로 본다
   const pages = UrlHarvester.parseRawText(raw);
   if (pages.length === 0) {
     toast('붙여넣은 내용에서 이미지 주소를 찾지 못했습니다.', { error: true });
