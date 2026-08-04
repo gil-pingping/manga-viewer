@@ -683,7 +683,17 @@ function applySettingsToUI() {
   applyPaper(state.settings.paper);
   applyBrightness(state.settings.brightness);
 
-  el.bookmarkletUrl.value = buildBookmarklet(window.location.origin);
+  // 북마크바로 끌어다 놓는 앵커와, 안 될 때 쓰는 복사용 입력칸 둘 다 채운다
+  const bookmarklet = buildBookmarklet(window.location.origin);
+  el.bookmarkletUrl.value = bookmarklet;
+
+  const dragChip = document.getElementById('bookmarklet-drag');
+  dragChip.setAttribute('href', bookmarklet);
+  // 딱지를 그냥 클릭하면 지금 보고 있는 뷰어에서 수집이 돌아버린다 — 끌어다 놓으라고 알려준다
+  dragChip.addEventListener('click', (e) => {
+    e.preventDefault();
+    toast('클릭이 아니라 북마크바로 끌어다 놓으세요 (⌘⇧B 로 북마크바 표시).', { duration: 5000 });
+  });
 }
 
 async function boot() {

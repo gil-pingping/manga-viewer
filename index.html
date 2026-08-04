@@ -157,17 +157,25 @@
             </div>
 
             <ol class="steps">
-              <li>아래 <b>주소 복사</b>를 누른다.</li>
-              <li>브라우저 북마크를 새로 만들고, 주소(URL) 칸에 붙여넣는다. 이름은 아무렇게나.</li>
-              <li>만화 보던 페이지에서 그 북마크를 누른다. 뷰어 탭이 열리며 이미지가 넘어온다.</li>
+              <li>북마크바를 켠다 (맥 크롬·사파리: <b>⌘⇧B</b>).</li>
+              <li>아래 파란 딱지를 <b>북마크바로 끌어다 놓는다</b>.</li>
+              <li>웹툰·이미지 페이지에서 끝까지 스크롤한 뒤 그 북마크를 누른다.</li>
             </ol>
 
-            <div class="row">
-              <input type="text" id="bookmarklet-url" class="field mono" readonly>
-              <button class="btn btn-primary" id="btn-copy-bookmarklet" type="button">
-                <svg class="ico"><use href="#i-copy"/></svg><span>주소 복사</span>
-              </button>
-            </div>
+            <a class="drag-chip" id="bookmarklet-drag" href="#" draggable="true">
+              <svg class="ico"><use href="#i-link"/></svg><span>만화 뷰어로 보내기</span>
+            </a>
+
+            <details class="fallback">
+              <summary>끌어다 놓기가 안 되면 (주소 직접 복사)</summary>
+              <div class="row">
+                <input type="text" id="bookmarklet-url" class="field mono" readonly>
+                <button class="btn" id="btn-copy-bookmarklet" type="button">
+                  <svg class="ico"><use href="#i-copy"/></svg><span>주소 복사</span>
+                </button>
+              </div>
+              <p class="hint">북마크를 새로 만들고 <b>주소(URL)</b> 칸에 붙여넣기. 주소창에 붙이면 사파리가 <code>javascript:</code>를 지운다.</p>
+            </details>
           </section>
 
           <section class="block">
