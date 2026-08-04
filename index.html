@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <meta name="mobile-web-app-capable" content="yes">
+  <!-- 구형 iOS 사파리는 아직 apple- 접두사만 인식한다 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="만화 뷰어">
+  <meta name="theme-color" content="#0b0c0e">
+
+  <title>만화 뷰어</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- 아이콘 스프라이트 (이모지 대신 선 아이콘으로 통일) -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.8 1.8"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.8-1.8"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h3.2l1.8 2.2H18a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-display" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M4.2 7.5l2.2 1.3M17.6 15.2l2.2 1.3M4.2 16.5l2.2-1.3M17.6 8.8l2.2-1.3"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></symbol>
+    <symbol id="i-skip-prev" viewBox="0 0 24 24"><path d="M17 6l-7 6 7 6M7 5v14"/></symbol>
+    <symbol id="i-skip-next" viewBox="0 0 24 24"><path d="M7 6l7 6-7 6M17 5v14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z" style="fill:currentColor;stroke:none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5.5v13M15 5.5v13"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.7-4.7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5H6A1.5 1.5 0 0 0 4.5 7v9"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4.5 4.5L19 7"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M8 8l4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
+  </svg>
+
+  <div id="app">
+    <!-- 읽는 면 -->
+    <main id="manga-container" class="manga-viewport"></main>
+
+    <!-- 터치 영역: 좌/우 넘김, 가운데 메뉴 토글 -->
+    <div class="tap-layer" id="tap-layer">
+      <button class="tap-zone tap-left" id="tap-left" type="button" aria-label="다음 페이지"></button>
+      <button class="tap-zone tap-center" id="tap-center" type="button" aria-label="메뉴 표시"></button>
+      <button class="tap-zone tap-right" id="tap-right" type="button" aria-label="이전 페이지"></button>
+    </div>
+
+    <!-- 자동 숨김 컨트롤 -->
+    <div class="chrome" id="chrome">
+      <header class="topbar">
+        <div class="title-block">
+          <h1 class="series-title" id="manga-title">만화 뷰어</h1>
+          <span class="chapter-badge" id="chapter-badge"></span>
+        </div>
+
+        <nav class="icon-row">
+          <button class="icon-btn" id="btn-ep-list" type="button">
+            <svg class="ico"><use href="#i-list"/></svg><span>목록</span>
+          </button>
+          <button class="icon-btn" id="btn-import" type="button">
+            <svg class="ico"><use href="#i-link"/></svg><span>불러오기</span>
+          </button>
+          <button class="icon-btn" id="btn-files" type="button">
+            <svg class="ico"><use href="#i-folder"/></svg><span>파일</span>
+          </button>
+          <button class="icon-btn" id="btn-display" type="button">
+            <svg class="ico"><use href="#i-display"/></svg><span>화면</span>
+          </button>
+          <button class="icon-btn" id="btn-settings" type="button">
+            <svg class="ico"><use href="#i-settings"/></svg><span>설정</span>
+          </button>
+        </nav>
+      </header>
+
+      <footer class="bottombar">
+        <div class="scrub">
+          <span class="page-counter" id="page-indicator">– / –</span>
+          <input type="range" id="page-slider" class="slider" min="1" max="1" value="1" aria-label="페이지 이동">
+        </div>
+
+        <div class="control-row">
+          <button class="icon-btn" id="btn-prev-ep" type="button">
+            <svg class="ico"><use href="#i-skip-prev"/></svg><span>이전화</span>
+          </button>
+          <button class="icon-btn" id="btn-prev-page" type="button">
+            <svg class="ico"><use href="#i-prev"/></svg><span>이전</span>
+          </button>
+
+          <div class="spacer"></div>
+
+          <button class="icon-btn" id="btn-autoplay" type="button">
+            <svg class="ico"><use href="#i-play"/></svg><span id="autoplay-label">정주행</span>
+          </button>
+          <button class="icon-btn is-hidden" id="btn-zoom-reset" type="button">
+            <svg class="ico"><use href="#i-zoom-out"/></svg><span>축소</span>
+          </button>
+          <button class="icon-btn" id="btn-fullscreen" type="button">
+            <svg class="ico"><use href="#i-expand"/></svg><span>전체</span>
+          </button>
+
+          <div class="spacer"></div>
+
+          <button class="icon-btn" id="btn-next-page" type="button">
+            <svg class="ico"><use href="#i-next"/></svg><span>다음</span>
+          </button>
+          <button class="icon-btn" id="btn-next-ep" type="button">
+            <svg class="ico"><use href="#i-skip-next"/></svg><span>다음화</span>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="busy" id="busy" hidden>
+      <div class="busy-spinner"></div>
+      <p class="busy-text" id="busy-text">불러오는 중…</p>
+    </div>
+
+    <!-- 불러오기 -->
+    <div class="modal" id="modal-import">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>만화 불러오기</h2>
+          <button class="close-btn close-modal" type="button" aria-label="닫기">
+            <svg class="ico"><use href="#i-close"/></svg>
+          </button>
+        </div>
+
+        <div class="sheet-body">
+          <section class="block">
+            <div class="block-head">
+              <span class="step-num">1</span>
+              <div>
+                <h3>북마클릿 (가장 확실함)</h3>
+                <p class="hint">브라우저에서 보던 페이지의 이미지를 그대로 이 뷰어로 넘긴다. 이미지를 나중에 채우는 사이트에서도 동작한다.</p>
+              </div>
+            </div>
+
+            <ol class="steps">
+              <li>아래 <b>주소 복사</b>를 누른다.</li>
+              <li>브라우저 북마크를 새로 만들고, 주소(URL) 칸에 붙여넣는다. 이름은 아무렇게나.</li>
+              <li>만화 보던 페이지에서 그 북마크를 누른다. 뷰어 탭이 열리며 이미지가 넘어온다.</li>
+            </ol>
+
+            <div class="row">
+              <input type="text" id="bookmarklet-url" class="field mono" readonly>
+              <button class="btn btn-primary" id="btn-copy-bookmarklet" type="button">
+                <svg class="ico"><use href="#i-copy"/></svg><span>주소 복사</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="block">
+            <div class="block-head">
+              <span class="step-num">2</span>
+              <div>
+                <h3>페이지 주소로 시도</h3>
+                <p class="hint">HTML 안에 이미지 주소가 그대로 들어있는 사이트라면 이것만으로 된다.</p>
+              </div>
+            </div>
+            <input type="url" id="url-input" class="field" placeholder="https://…" inputmode="url" autocomplete="off" spellcheck="false">
+          </section>
+
+          <section class="block">
+            <div class="block-head">
+              <span class="step-num">3</span>
+              <div>
+                <h3>직접 붙여넣기</h3>
+                <p class="hint">이미지 주소 목록이나 페이지 소스를 그대로 붙여도 된다.</p>
+              </div>
+            </div>
+            <textarea id="raw-input" class="field" rows="4" placeholder="https://…/001.webp&#10;https://…/002.webp" spellcheck="false"></textarea>
+          </section>
+        </div>
+
+        <div class="sheet-foot">
+          <button class="btn close-modal" type="button">취소</button>
+          <button class="btn btn-primary" id="btn-submit-url" type="button">불러오기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 로컬 파일 -->
+    <div class="modal" id="modal-files">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>로컬 파일</h2>
+          <button class="close-btn close-modal" type="button" aria-label="닫기">
+            <svg class="ico"><use href="#i-close"/></svg>
+          </button>
+        </div>
+        <div class="sheet-body">
+          <button class="dropzone" id="drop-zone" type="button">
+            <svg class="ico ico-lg"><use href="#i-upload"/></svg>
+            <b>CBZ · ZIP · 이미지 여러 장</b>
+            <span class="hint">여기에 끌어다 놓거나 눌러서 고르기</span>
+          </button>
+          <input type="file" id="file-input" accept=".zip,.cbz,image/*" multiple hidden>
+        </div>
+      </div>
+    </div>
+
+    <!-- 화수 목록 -->
+    <div class="modal" id="modal-episodes">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>화수 목록</h2>
+          <button class="close-btn close-modal" type="button" aria-label="닫기">
+            <svg class="ico"><use href="#i-close"/></svg>
+          </button>
+        </div>
+        <div class="sheet-body">
+          <div class="ep-list" id="episode-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 화면 (보기 모드 · 필터) -->
+    <div class="modal" id="modal-display">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>화면</h2>
+          <button class="close-btn close-modal" type="button" aria-label="닫기">
+            <svg class="ico"><use href="#i-close"/></svg>
+          </button>
+        </div>
+        <div class="sheet-body">
+          <section class="block">
+            <label class="label">보기 모드</label>
+            <div class="segmented" id="mode-group" role="group">
+              <button type="button" data-mode="auto" class="is-active">자동</button>
+              <button type="button" data-mode="strip">세로 스크롤</button>
+              <button type="button" data-mode="single">한 장</button>
+              <button type="button" data-mode="double">두 장 펼침</button>
+            </div>
+            <p class="hint">자동: 이미지 비율을 보고 웹툰이면 세로 스크롤, 만화책이면 페이지 넘김을 고른다.</p>
+          </section>
+
+          <section class="block">
+            <label class="label" for="filter-brightness">밝기 <output id="brightness-out">100%</output></label>
+            <input type="range" id="filter-brightness" class="slider" min="40" max="130" value="100">
+          </section>
+
+          <section class="block">
+            <label class="label">색 보정</label>
+            <div class="segmented" id="paper-group" role="group">
+              <button type="button" data-paper="none" class="is-active">기본</button>
+              <button type="button" data-paper="sepia">세피아</button>
+              <button type="button" data-paper="contrast">고대비</button>
+              <button type="button" data-paper="night">야간</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- 설정 -->
+    <div class="modal" id="modal-settings">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>설정</h2>
+          <button class="close-btn close-modal" type="button" aria-label="닫기">
+            <svg class="ico"><use href="#i-close"/></svg>
+          </button>
+        </div>
+        <div class="sheet-body">
+          <section class="block">
+            <label class="label">읽기 방향</label>
+            <div class="segmented" id="dir-group" role="group">
+              <button type="button" data-dir="RTL" class="is-active">오른쪽 → 왼쪽</button>
+              <button type="button" data-dir="LTR">왼쪽 → 오른쪽</button>
+            </div>
+            <p class="hint">일본 만화는 오른쪽부터, 웹툰·서양 만화는 왼쪽부터.</p>
+          </section>
+
+          <section class="block">
+            <label class="label" for="setting-transition">페이지 넘김 효과</label>
+            <select id="setting-transition" class="field">
+              <option value="slide">슬라이드</option>
+              <option value="fade">페이드</option>
+              <option value="none">없음</option>
+            </select>
+          </section>
+
+          <section class="block">
+            <label class="label" for="setting-speed">정주행 간격 (초)</label>
+            <input type="number" id="setting-speed" class="field" value="5" min="1" max="60" inputmode="numeric">
+          </section>
+
+          <section class="block">
+            <p class="hint">
+              한 손가락 좌우로 밀기 = 페이지 넘김 · 두 손가락 = 확대 · 두 번 두드리기 = 확대 토글 ·
+              화면 가운데 = 메뉴 · 키보드 ← → Space, F 전체화면
+            </p>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
