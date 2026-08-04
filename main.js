@@ -30,6 +30,7 @@ const state = {
     sourceUrl: null,
     prevUrl: null,
     nextUrl: null,
+    isDemo: true, // 마지막 장에서 데모로 자동 진행하지 않도록 표시
   })),
   currentId: null,
   settings: loadSettings(),
@@ -292,9 +293,12 @@ function initEngine() {
     },
 
     onEpisodeEnd: () => {
-      const idx = currentIndex();
-      const hasNext = idx < state.chapters.length - 1 || currentChapter().nextUrl;
-      if (hasNext) {
+      const next = state.chapters[currentIndex() + 1];
+
+      // 데모로 자동 진행하면 "왜 갑자기 빈 컷이 나오지"가 된다. 불러온 것만 이어본다.
+      const canAutoAdvance = (next && !next.isDemo) || currentChapter().nextUrl;
+
+      if (canAutoAdvance) {
         toast('마지막 페이지입니다. 다음 화로 넘어갑니다.');
         setTimeout(() => goChapter(1), 900);
       } else {

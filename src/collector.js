@@ -10,14 +10,18 @@
  * (script src 주입은 https 페이지에서 mixed content 로 차단되므로 못 쓴다.)
  */
 function collectManga(viewerOrigin) {
-  var MIN_SIDE = 300; // 긴 변
-  var MIN_SHORT_SIDE = 200; // 짧은 변 — 배너·스카이스크래퍼 광고를 걸러낸다
+  // 짧은 변 하나만 본다. 광고 표준 규격은 전부 한쪽이 얇다:
+  //   728x90 · 970x90 (배너) -> 90,  160x600 (스카이스크래퍼) -> 160
+  // 반면 만화 컷이든 사진이든 짧은 변이 이보다 두툼하다. 긴 변 조건을 같이 걸면
+  // 228x295 같은 정사각형 사진이 억울하게 잘린다 (Pinterest 에서 확인).
+  var MIN_SHORT_SIDE = 180;
 
   var JUNK =
     /logo|icon|banner|button|avatar|thumb|captcha|loading|spinner|notice|emoji|smil|sns|ad[_-]|advert|google|facebook|twitter|kakao|profile|blank\.|1x1|pixel/i;
 
   // 뷰어 탭을 먼저 연다. 수집이 끝난 뒤에 열면 팝업 차단에 걸린다.
-  var viewerTab = window.open(viewerOrigin + '/#import=latest', '_blank');
+  // 해시 없이 연다 — 수집이 끝나면 이 탭의 location 에 페이로드를 실어 보낸다.
+  var viewerTab = window.open(viewerOrigin + '/', '_blank');
 
   function absolutize(src) {
     if (!src) return null;
@@ -67,18 +71,27 @@ function collectManga(viewerOrigin) {
   function isBigEnough(el) {
     var nw = el.naturalWidth || 0;
     var nh = el.naturalHeight || 0;
-    if (nw > 0 && nh > 0) {
-      return Math.min(nw, nh) >= MIN_SHORT_SIDE && Math.max(nw, nh) >= MIN_SIDE;
-    }
+    if (nw > 0 && nh > 0) return Math.min(nw, nh) >= MIN_SHORT_SIDE;
 
     var ow = el.offsetWidth || 0;
     var oh = el.offsetHeight || 0;
-    if (ow > 0 && oh > 0) {
-      return Math.min(ow, oh) >= MIN_SHORT_SIDE && Math.max(ow, oh) >= MIN_SIDE;
-    }
+    if (ow > 0 && oh > 0) return Math.min(ow, oh) >= MIN_SHORT_SIDE;
 
     // 아직 안 불린 lazy 이미지는 data-* 가 있으면 본문으로 본다
     return !!(el.getAttribute('data-src') || el.getAttribute('data-original'));
+  }
+
+  /**
+   * 격자로 보여주는 사이트는 작은 썸네일을 심어둔다. 전체화면 뷰어에서는 뭉개진다.
+   * 주소에 크기 조각이 들어있는 호스트는 큰 판으로 바꿔치기한다.
+   * (같은 이미지의 다른 해상도일 뿐 — 없는 걸 만들어내는 게 아니다)
+   */
+  function upgradeResolution(url) {
+    // Pinterest: /236x/ · /474x/ 등 -> /736x/ (736x 는 대체로 존재하고 originals 보다 안전)
+    if (url.indexOf('i.pinimg.com/') !== -1) {
+      return url.replace(/\/(\d{2,4}x)\//, '/736x/');
+    }
+    return url;
   }
 
   function harvest() {
@@ -89,9 +102,12 @@ function collectManga(viewerOrigin) {
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
       var url = absolutize(realSource(el));
-      if (!url || seen[url]) continue;
+      if (!url) continue;
       if (JUNK.test(url)) continue;
       if (el.tagName === 'IMG' && !isBigEnough(el)) continue;
+
+      url = upgradeResolution(url);
+      if (seen[url]) continue; // 승격 후에 중복 판정 (같은 핀의 여러 크기를 하나로)
       seen[url] = 1;
       out.push(url);
     }
@@ -132,36 +148,58 @@ function collectManga(viewerOrigin) {
     var pages = harvest();
 
     if (pages.length === 0) {
-      alert('만화 이미지를 찾지 못했습니다.\n페이지를 끝까지 스크롤한 뒤 다시 눌러주세요.');
+      alert('이미지를 찾지 못했습니다.\n페이지를 끝까지 스크롤한 뒤 다시 눌러주세요.');
       return;
     }
 
     var payload = {
-      title: (document.title || '수집한 만화').split(/[|\-–—>]/)[0].trim(),
+      title: (document.title || '수집한 이미지').split(/[|\-–—>]/)[0].trim(),
       sourceUrl: location.href,
       prevUrl: findLink(/이전화|이전\s*화|prev/i),
       nextUrl: findLink(/다음화|다음\s*화|next/i),
       pages: pages,
     };
 
+    /**
+     * 페이로드를 **URL 해시로** 넘긴다. fetch 로 보내면 안 된다:
+     * 많은 사이트가 CSP `connect-src` 로 허용 목록 밖 오리진 연결을 막는다
+     * (Pinterest 확인됨). 네비게이션은 그 제한을 받지 않는다.
+     *
+     * 이미 열어둔 탭의 location 을 바꾸는 방식이라 팝업 차단도 안 걸린다
+     * (탭은 클릭 제스처 안에서 미리 열어놨다).
+     */
+    var encoded = encodeURIComponent(JSON.stringify(payload));
+
+    if (encoded.length < 30000) {
+      var target = viewerOrigin + '/#import=' + encoded;
+      if (viewerTab) {
+        viewerTab.location = target;
+        viewerTab.focus();
+      } else {
+        // 팝업이 막혔으면 현재 탭에서 연다 (뒤로가기로 돌아올 수 있다)
+        location.href = target;
+      }
+      return;
+    }
+
+    // 주소에 담기 힘든 분량이면 서버에 올려본다 (CSP 가 허용하는 사이트에서만 통한다)
     fetch(viewerOrigin + '/api/import', {
       method: 'POST',
-      // text/plain 이면 CORS 프리플라이트를 타지 않는다
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload),
       mode: 'cors',
       keepalive: true,
     })
       .then(function () {
-        if (viewerTab) viewerTab.focus();
+        if (viewerTab) {
+          viewerTab.location = viewerOrigin + '/#import=latest';
+          viewerTab.focus();
+        }
       })
-      .catch(function (err) {
+      .catch(function () {
         alert(
-          '뷰어에 보내지 못했습니다: ' +
-            err.message +
-            '\n\n뷰어 개발 서버(' +
-            viewerOrigin +
-            ')가 켜져 있는지 확인해주세요.'
+          '이미지가 ' + pages.length + '장이라 한 번에 넘기지 못했습니다.\n' +
+            '이 사이트는 외부 연결이 차단되어 있습니다. 페이지를 나눠서 시도해주세요.'
         );
       });
   });
