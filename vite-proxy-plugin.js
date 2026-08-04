@@ -4,7 +4,6 @@
  * 라우트
  *   POST /api/import          북마클릿이 수집한 이미지 목록을 받아 메모리에 보관
  *   GET  /api/import/latest   뷰어가 방금 들어온 목록을 꺼내간다
- *   GET  /api/fetch-page      외부 페이지 HTML을 서버에서 가져온다 (CORS 우회)
  *   GET  /api/proxy-image     이미지 바이너리를 서버에서 가져와 중계 (Referer 유지)
  *
  * 이미지 중계가 필요한 이유: 상당수 이미지 호스트가 Referer 없는 요청이나
@@ -172,48 +171,6 @@ export default function mangaProxyPlugin() {
           sendJson(res, 200, { ok: true, count: cleanPages.length });
         } catch (err) {
           sendJson(res, 400, { ok: false, error: err.message });
-        }
-      });
-
-      /* ---------------------------------------------------------------- */
-      /* 페이지 HTML 가져오기                                              */
-      /* ---------------------------------------------------------------- */
-      server.middlewares.use('/api/fetch-page', async (req, res) => {
-        if (handlePreflight(req, res)) return;
-
-        const targetUrl = new URL(req.url, 'http://localhost').searchParams.get('url');
-        if (!targetUrl) {
-          sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
-          return;
-        }
-
-        try {
-          const parsed = assertFetchableUrl(targetUrl);
-          const response = await upstreamFetch(parsed.href, {
-            'User-Agent': BROWSER_UA,
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.5',
-            Referer: parsed.origin + '/',
-          });
-
-          const html = await response.text();
-
-          if (!response.ok) {
-            sendJson(res, 502, {
-              ok: false,
-              error: `사이트가 ${response.status} 응답을 반환했습니다.`,
-              status: response.status,
-            });
-            return;
-          }
-
-          res.writeHead(200, {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
-          });
-          res.end(html);
-        } catch (err) {
-          sendJson(res, 502, { ok: false, error: err.message });
         }
       });
 

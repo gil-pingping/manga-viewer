@@ -83,7 +83,6 @@ const el = {
   modalSettings: $('modal-settings'),
 
   epList: $('episode-list'),
-  urlInput: $('url-input'),
   rawInput: $('raw-input'),
   btnSubmitUrl: $('btn-submit-url'),
   bookmarkletUrl: $('bookmarklet-url'),
@@ -215,8 +214,13 @@ function addChapter(harvested, idPrefix) {
   return chapter;
 }
 
-/** 인접 화로 이동. 목록에 없으면 사이트의 이전/다음 링크를 파싱해 본다 */
-async function goChapter(delta) {
+/**
+ * 인접 화로 이동.
+ *
+ * 목록에 없는 화는 서버가 대신 긁어올 수 없다 (이미지가 HTML에 없는 사이트가 대부분).
+ * 그래서 그 화를 새 탭으로 열어주고, 거기서 북마클릿을 한 번 더 누르게 한다.
+ */
+function goChapter(delta) {
   const idx = currentIndex();
   const target = state.chapters[idx + delta];
 
@@ -225,23 +229,14 @@ async function goChapter(delta) {
     return;
   }
 
-  const chapter = currentChapter();
-  const url = delta > 0 ? chapter.nextUrl : chapter.prevUrl;
+  const url = delta > 0 ? currentChapter().nextUrl : currentChapter().prevUrl;
   if (!url) {
     toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
     return;
   }
 
-  try {
-    setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
-    const harvested = await UrlHarvester.fetchFromUrl(url);
-    addChapter(harvested, 'import');
-    toast(`${harvested.pages.length}장 불러왔습니다.`);
-  } catch (err) {
-    toast(err.message, { error: true });
-  } finally {
-    setBusy(false);
-  }
+  window.open(url, '_blank');
+  toast('그 화를 새 탭에서 열었습니다. 거기서 북마클릿을 누르세요.', { duration: 5000 });
 }
 
 /* ==================================================================== */
@@ -394,51 +389,24 @@ function applyBrightness(value) {
 /* 불러오기                                                              */
 /* ==================================================================== */
 
-async function submitImport() {
-  const url = el.urlInput.value.trim();
+function submitImport() {
   const raw = el.rawInput.value.trim();
 
-  if (!url && !raw) {
-    toast('주소를 넣거나 이미지 목록을 붙여넣어 주세요.', { error: true });
+  if (!raw) {
+    toast('이미지 주소를 붙여넣어 주세요.', { error: true });
     return;
   }
 
-  try {
-    setBusy(true, '만화 찾는 중…');
-
-    // 붙여넣은 내용이 있으면 그것을 먼저 쓴다 (네트워크가 필요 없다)
-    if (raw) {
-      const pages = UrlHarvester.parseRawText(raw);
-      if (pages.length === 0) throw new Error('붙여넣은 내용에서 이미지 주소를 찾지 못했습니다.');
-
-      addChapter({ title: '붙여넣은 만화', targetUrl: null, pages }, 'paste');
-      el.rawInput.value = '';
-      closeModal(el.modalImport);
-      toast(`${pages.length}장 불러왔습니다.`);
-      return;
-    }
-
-    const harvested = await UrlHarvester.fetchFromUrl(url);
-    addChapter(harvested, 'import');
-    el.urlInput.value = '';
-    closeModal(el.modalImport);
-
-    // 한두 장만 잡혔으면 본문이 아니라 배너를 물어온 것일 가능성이 크다.
-    // 성공한 척하지 말고 북마클릿을 권한다.
-    if (harvested.pages.length <= 2) {
-      toast(
-        `${harvested.pages.length}장만 찾았습니다. 본문 이미지가 아닐 수 있어요.\n` +
-          `이 사이트는 북마클릿으로 넘기는 편이 확실합니다.`,
-        { error: true }
-      );
-    } else {
-      toast(`${harvested.pages.length}장 불러왔습니다.`);
-    }
-  } catch (err) {
-    toast(err.message, { error: true });
-  } finally {
-    setBusy(false);
+  const pages = UrlHarvester.parseRawText(raw);
+  if (pages.length === 0) {
+    toast('붙여넣은 내용에서 이미지 주소를 찾지 못했습니다.', { error: true });
+    return;
   }
+
+  addChapter({ title: '붙여넣은 만화', targetUrl: null, pages }, 'paste');
+  el.rawInput.value = '';
+  closeModal(el.modalImport);
+  toast(`${pages.length}장 불러왔습니다.`);
 }
 
 async function handleFiles(files) {
@@ -559,9 +527,6 @@ function wireEvents() {
 
   /* 불러오기 */
   el.btnSubmitUrl.addEventListener('click', submitImport);
-  el.urlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitImport();
-  });
 
   el.btnCopyBookmarklet.addEventListener('click', async () => {
     const code = el.bookmarkletUrl.value;

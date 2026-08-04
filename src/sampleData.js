@@ -1,127 +1,70 @@
 /**
- * 뷰어 동작 확인용 더미 페이지.
+ * 뷰어 동작 확인용 더미 페이지. 빈 컷 프레임만 그린다.
  *
- * 실제 만화 대신 빈 컷 프레임만 그린다. 목적은 두 가지:
- *   - 네트워크 없이도 첫 화면에 뭔가 보이게 한다
- *   - 펼침 컷 짝짓기 / 세로 스크롤 판정을 눈으로 확인할 표본을 준다
+ * 두 화를 남겨둔 이유는 리더의 두 갈래를 눈으로 확인할 표본이 필요해서다:
+ *   1화 = 페이지 넘김 + 펼침 컷 짝짓기 / 2화 = 세로 스크롤 판정
  */
 
-const PAGE_W = 1000;
-const PAGE_H = 1414;
+/** 크기에 맞춰 컷을 대충 나눠 그린 SVG 한 장 */
+function page(width, height, label, pageNum) {
+  const rows = height > width * 1.8 ? 4 : 3; // 세로로 길면 컷을 더 쌓는다
+  const pad = Math.round(width * 0.06);
+  const gap = Math.round(height * 0.02);
+  const rowH = (height - pad * 2 - gap * (rows - 1)) / rows;
 
-/** 세로 한 장 (일반 페이지) */
-function portraitPage(label, pageNum) {
-  return svgPage(
-    PAGE_W,
-    PAGE_H,
-    label,
-    pageNum,
-    `
-    <rect x="60" y="60" width="880" height="360" rx="3"/>
-    <rect x="60" y="450" width="420" height="400" rx="3"/>
-    <rect x="520" y="450" width="420" height="400" rx="3"/>
-    <rect x="60" y="880" width="880" height="440" rx="3"/>
-  `
-  );
-}
+  let panels = '';
+  for (let r = 0; r < rows; r++) {
+    const y = pad + r * (rowH + gap);
+    // 가운데 줄만 좌우로 쪼개 변화를 준다
+    if (r === 1 && rows === 3) {
+      const half = (width - pad * 2 - gap) / 2;
+      panels += `<rect x="${pad}" y="${y}" width="${half}" height="${rowH}" rx="3"/>`;
+      panels += `<rect x="${pad + half + gap}" y="${y}" width="${half}" height="${rowH}" rx="3"/>`;
+    } else {
+      panels += `<rect x="${pad}" y="${y}" width="${width - pad * 2}" height="${rowH}" rx="3"/>`;
+    }
+  }
 
-/** 가로로 넓은 펼침 컷 — 엔진이 spread 로 인식해야 한다 */
-function spreadPage(label, pageNum) {
-  return svgPage(
-    PAGE_W * 2,
-    PAGE_H,
-    label,
-    pageNum,
-    `
-    <rect x="60" y="60" width="1880" height="620" rx="3"/>
-    <rect x="60" y="710" width="900" height="610" rx="3"/>
-    <rect x="1000" y="710" width="940" height="610" rx="3"/>
-  `
-  );
-}
-
-/** 세로로 긴 웹툰 스트립 — 엔진이 strip 모드를 고르게 하는 표본 */
-function stripPage(label, pageNum) {
-  return svgPage(
-    800,
-    3200,
-    label,
-    pageNum,
-    `
-    <rect x="50" y="50" width="700" height="700" rx="3"/>
-    <rect x="50" y="800" width="700" height="600" rx="3"/>
-    <rect x="50" y="1450" width="700" height="800" rx="3"/>
-    <rect x="50" y="2300" width="700" height="850" rx="3"/>
-  `
-  );
-}
-
-function svgPage(width, height, label, pageNum, panels) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
   <rect width="${width}" height="${height}" fill="#f7f7f5"/>
   <g fill="#ffffff" stroke="#14161a" stroke-width="5">${panels}</g>
   <g font-family="system-ui, sans-serif" fill="#9aa0a6" font-size="26">
-    <text x="60" y="${height - 34}">${label}</text>
-    <text x="${width - 60}" y="${height - 34}" text-anchor="end">${pageNum}</text>
+    <text x="${pad}" y="${height - 12}">${label}</text>
+    <text x="${width - pad}" y="${height - 12}" text-anchor="end">${pageNum}</text>
   </g>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/** 8번이 펼침 컷인 세로 만화 한 화 */
-function pagedEpisode(id, number, title, prevId, nextId) {
-  const total = 12;
-  const label = `DEMO · ${title}`;
-
-  const pages = Array.from({ length: total }, (_, i) => {
+/** 8번이 가로로 넓은 펼침 컷 → 엔진이 단독 표시해야 한다 */
+function pagedEpisode() {
+  const label = 'DEMO · 페이지 넘김';
+  const pages = Array.from({ length: 12 }, (_, i) => {
     const pageNumber = i + 1;
     const isSpread = pageNumber === 8;
     return {
       pageNumber,
-      url: isSpread ? spreadPage(label, pageNumber) : portraitPage(label, pageNumber),
+      url: isSpread ? page(2000, 1414, label, pageNumber) : page(1000, 1414, label, pageNumber),
       isSpread,
     };
   });
 
-  return {
-    id,
-    number,
-    title,
-    totalPages: total,
-    prevEpisodeId: prevId,
-    nextEpisodeId: nextId,
-    pages,
-  };
+  return { id: 'demo-paged', number: 1, title: '페이지 넘김 (펼침 컷 포함)', totalPages: 12, pages };
 }
 
-/** 세로 스크롤 웹툰 한 화 */
-function stripEpisode(id, number, title, prevId, nextId) {
-  const total = 5;
-  const label = `DEMO · ${title}`;
-
-  const pages = Array.from({ length: total }, (_, i) => ({
+/** 세로로 긴 컷 → auto 모드가 strip 을 골라야 한다 */
+function stripEpisode() {
+  const label = 'DEMO · 세로 스크롤';
+  const pages = Array.from({ length: 5 }, (_, i) => ({
     pageNumber: i + 1,
-    url: stripPage(label, i + 1),
+    url: page(800, 3200, label, i + 1),
     isSpread: false,
   }));
 
-  return {
-    id,
-    number,
-    title,
-    totalPages: total,
-    prevEpisodeId: prevId,
-    nextEpisodeId: nextId,
-    pages,
-  };
+  return { id: 'demo-strip', number: 2, title: '세로 스크롤 웹툰', totalPages: 5, pages };
 }
 
 export const SAMPLE_MANGA_SERIES = {
   title: '뷰어 동작 확인용 샘플',
-  description: '8.4인치 태블릿 리더 테스트 페이지',
-  episodes: [
-    pagedEpisode('demo-paged-1', 1, '페이지 넘김 (펼침 컷 포함)', null, 'demo-paged-2'),
-    pagedEpisode('demo-paged-2', 2, '페이지 넘김 2화', 'demo-paged-1', 'demo-strip-1'),
-    stripEpisode('demo-strip-1', 3, '세로 스크롤 웹툰', 'demo-paged-2', null),
-  ],
+  episodes: [pagedEpisode(), stripEpisode()],
 };
