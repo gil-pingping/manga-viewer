@@ -171,9 +171,32 @@ function currentIndex() {
   return state.chapters.findIndex((c) => c.id === state.currentId);
 }
 
+/** 불러온 게 없을 때. 빈 컷 프레임을 그리면 고장으로 보이니 아예 안 그린다 */
+function showEmptyState() {
+  state.currentId = null;
+  document.getElementById('app').classList.add('is-empty');
+
+  el.title.textContent = '만화 뷰어';
+  el.chapter.textContent = '';
+  el.indicator.textContent = '– / –';
+  el.slider.max = '1';
+  el.slider.value = '1';
+  el.slider.disabled = true;
+
+  [el.btnPrevPage, el.btnNextPage, el.btnPrevEp, el.btnNextEp, el.btnAutoplay].forEach((b) => {
+    b.disabled = true;
+  });
+}
+
 function openChapter(chapterId, pageNumber) {
   const chapter = state.chapters.find((c) => c.id === chapterId);
   if (!chapter) return;
+
+  document.getElementById('app').classList.remove('is-empty');
+  el.slider.disabled = false;
+  [el.btnPrevPage, el.btnNextPage, el.btnAutoplay].forEach((b) => {
+    b.disabled = false;
+  });
 
   state.currentId = chapter.id;
 
@@ -525,6 +548,14 @@ function wireEvents() {
     });
   });
 
+  /* 빈 상태에서 바로 시작 */
+  document.getElementById('empty-files').addEventListener('click', () => openModal(el.modalFiles));
+  document.getElementById('empty-import').addEventListener('click', () => openModal(el.modalImport));
+  document.getElementById('empty-demo').addEventListener('click', () => {
+    openChapter(state.chapters[0].id, 1);
+    toast('데모 페이지입니다. 실제 만화는 위 버튼으로 불러오세요.', { duration: 4000 });
+  });
+
   /* 불러오기 */
   el.btnSubmitUrl.addEventListener('click', submitImport);
 
@@ -662,9 +693,10 @@ async function boot() {
     if (/[#&]import=/.test(window.location.hash)) consumePendingImport();
   });
 
-  // 북마클릿으로 넘어온 게 있으면 그것을, 없으면 샘플을 연다
+  // 북마클릿으로 넘어온 게 있으면 그것을 열고, 없으면 빈 상태를 보여준다.
+  // 데모를 자동으로 열면 빈 컷 프레임이 "고장난 뷰어"처럼 보인다 — 데모는 목록에서 고른다.
   const imported = await consumePendingImport();
-  if (!imported) openChapter(state.chapters[0].id);
+  if (!imported) showEmptyState();
 
   showChrome();
 }

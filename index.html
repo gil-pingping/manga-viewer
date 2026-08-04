@@ -41,6 +41,22 @@
     <!-- 읽는 면 -->
     <main id="manga-container" class="manga-viewport"></main>
 
+    <!-- 불러온 만화가 없을 때. 가짜 페이지를 그리지 않고 할 일을 알려준다 -->
+    <div class="empty-state" id="empty-state">
+      <svg class="empty-ico"><use href="#i-folder"/></svg>
+      <h2>불러온 만화가 없습니다</h2>
+      <p class="hint">아래에서 골라 시작하세요.</p>
+      <div class="empty-actions">
+        <button class="btn btn-primary" id="empty-files" type="button">
+          <svg class="ico"><use href="#i-folder"/></svg><span>CBZ · 이미지 열기</span>
+        </button>
+        <button class="btn" id="empty-import" type="button">
+          <svg class="ico"><use href="#i-link"/></svg><span>주소 붙여넣기 · 북마클릿</span>
+        </button>
+      </div>
+      <button class="link-btn" id="empty-demo" type="button">데모 페이지로 화면 확인하기</button>
+    </div>
+
     <!-- 터치 영역: 좌/우 넘김, 가운데 메뉴 토글 -->
     <div class="tap-layer" id="tap-layer">
       <button class="tap-zone tap-left" id="tap-left" type="button" aria-label="다음 페이지"></button>
