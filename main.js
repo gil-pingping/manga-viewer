@@ -2,6 +2,14 @@ import { SAMPLE_MANGA_SERIES } from './src/sampleData.js';
 import { UrlHarvester } from './src/urlHarvester.js';
 import { ReaderEngine } from './src/readerEngine.js';
 import { buildBookmarklet } from './src/collector.js';
+import {
+  findChapter,
+  indexOfChapter,
+  realNeighbor as findRealNeighbor,
+  hasAdjacent as canGoAdjacent,
+  resolveAdjacent,
+  upsertChapter,
+} from './src/core/chapterNav.js';
 
 /* ==================================================================== */
 /* 상태                                                                  */
@@ -176,12 +184,13 @@ function setBusy(on, text = '불러오는 중…') {
 /* 챕터                                                                  */
 /* ==================================================================== */
 
+/* 목록 탐색 판단은 core/chapterNav 에 있다 (순수 함수라 테스트된다) */
 function currentChapter() {
-  return state.chapters.find((c) => c.id === state.currentId) || state.chapters[0];
+  return findChapter(state.chapters, state.currentId);
 }
 
 function currentIndex() {
-  return state.chapters.findIndex((c) => c.id === state.currentId);
+  return indexOfChapter(state.chapters, state.currentId);
 }
 
 /** 불러온 게 없을 때. 빈 컷 프레임을 그리면 고장으로 보이니 아예 안 그린다 */
@@ -229,22 +238,12 @@ function openChapter(chapterId, pageNumber) {
  * 같은 출처를 다시 불러오면 새로 만들지 않고 갱신한다.
  */
 function addChapter(harvested, idPrefix) {
-  const existing = harvested.targetUrl
-    ? state.chapters.find((c) => c.sourceUrl && c.sourceUrl === harvested.targetUrl)
-    : null;
-
-  const chapter = existing || {
-    id: `${idPrefix}-${Date.now()}`,
-    label: '불러옴',
-  };
-
-  chapter.title = harvested.title || '불러온 만화';
-  chapter.pages = harvested.pages;
-  chapter.sourceUrl = harvested.targetUrl || null;
-  chapter.prevUrl = harvested.prevUrl || null;
-  chapter.nextUrl = harvested.nextUrl || null;
-
-  if (!existing) state.chapters.unshift(chapter);
+  const { chapters, chapter } = upsertChapter(
+    state.chapters,
+    harvested,
+    `${idPrefix}-${Date.now()}`
+  );
+  state.chapters = chapters;
 
   // 새로 불러온 콘텐츠는 항상 auto 로 본다. 앞 챕터에서 고른 모드를 물려받으면
   // 웹툰이 페이지 넘김으로 뜨는 식으로 깨진다.
@@ -254,20 +253,12 @@ function addChapter(harvested, idPrefix) {
   return chapter;
 }
 
-/**
- * 목록에서 데모가 아닌 이웃 챕터.
- * 불러온 챕터는 목록 맨 앞에 꽂히므로 단순히 idx+1 을 쓰면 데모로 새어나간다.
- */
 function realNeighbor(delta) {
-  for (let i = currentIndex() + delta; i >= 0 && i < state.chapters.length; i += delta) {
-    if (!state.chapters[i].isDemo) return state.chapters[i];
-  }
-  return null;
+  return findRealNeighbor(state.chapters, state.currentId, delta);
 }
 
 function hasAdjacent(delta) {
-  const url = delta > 0 ? currentChapter().nextUrl : currentChapter().prevUrl;
-  return !!url || !!realNeighbor(delta);
+  return canGoAdjacent(state.chapters, state.currentId, delta);
 }
 
 /**
@@ -276,30 +267,29 @@ function hasAdjacent(delta) {
  * 없으면 이미 불러둔 챕터 중에서 찾는다.
  */
 async function goChapter(delta) {
-  const url = delta > 0 ? currentChapter().nextUrl : currentChapter().prevUrl;
+  const move = resolveAdjacent(state.chapters, state.currentId, delta);
 
-  if (url) {
-    try {
-      setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
-      const harvested = await UrlHarvester.fetchFromUrl(url);
-      addChapter(harvested, 'import');
-      toast(`${harvested.pages.length}장 불러왔습니다.`);
-      return;
-    } catch (err) {
-      toast(err.message, { error: true });
-      return;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const neighbor = realNeighbor(delta);
-  if (neighbor) {
-    openChapter(neighbor.id);
+  if (move.kind === 'open') {
+    openChapter(move.chapter.id);
     return;
   }
 
-  toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
+  if (move.kind === 'none') {
+    toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
+    return;
+  }
+
+  // kind === 'fetch' — 사이트가 준 인접 화 주소를 서버가 받아온다
+  try {
+    setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
+    const harvested = await UrlHarvester.fetchFromUrl(move.url);
+    addChapter(harvested, 'import');
+    toast(`${harvested.pages.length}장 불러왔습니다.`);
+  } catch (err) {
+    toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
+  } finally {
+    setBusy(false);
+  }
 }
 
 /* ==================================================================== */
