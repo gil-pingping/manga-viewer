@@ -151,6 +151,69 @@ async function upstreamFetch(url, headers) {
   throw lastErr || new Error('상류 요청 실패');
 }
 
+/* ==================================================================== */
+/* 헤드리스 브라우저 (JS 렌더 사이트용)                                   */
+/* ==================================================================== */
+
+/**
+ * 브라우저는 하나만 띄워 재사용한다. 매 요청마다 실행하면 1~3초씩 든다.
+ * playwright-core 는 브라우저를 내려받지 않는다 — 설치된 Chrome 을 쓴다.
+ * 그래서 의존성이 가볍다(13MB, 브라우저 바이너리 0).
+ */
+let browserPromise = null;
+
+function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = import('playwright-core')
+      .then(({ chromium }) => chromium.launch({ channel: 'chrome', headless: true }))
+      .catch((err) => {
+        browserPromise = null; // 실패하면 다음 요청에서 다시 시도한다
+        throw new Error(
+          '헤드리스 브라우저를 띄우지 못했습니다. Chrome 이 설치돼 있어야 합니다: ' + err.message
+        );
+      });
+  }
+  return browserPromise;
+}
+
+/**
+ * 페이지에 주입할 선별 규칙 소스.
+ *
+ * 북마클릿이 쓰는 것과 **같은 소스**다. collector 의 BUNDLED 를 재사용하므로
+ * 규칙 사본이 생기지 않는다 — 이 프로젝트에서 복붙이 버그의 근원이었다.
+ */
+let rulesSourcePromise = null;
+
+function getRulesSource() {
+  if (!rulesSourcePromise) {
+    rulesSourcePromise = (async () => {
+      const { readFile } = await import('node:fs/promises');
+      const { fileURLToPath } = await import('node:url');
+      const { dirname, join } = await import('node:path');
+      const here = dirname(fileURLToPath(import.meta.url));
+
+      // 소스를 파일에서 그대로 읽는다. 모듈 로더가 어떻게 변환했는지에
+      // 의존하지 않으므로 서버·북마클릿이 같은 규칙을 쓴다는 보장이 단순해진다.
+      const files = [join(here, 'src/core/imageRules.js'), join(here, 'src/collect/fromDocument.js')];
+      const parts = [];
+      for (const f of files) {
+        const text = await readFile(f, 'utf8');
+        // 이 두 파일에는 import 문이 없다 (규칙은 자기완결적이다).
+        // `export` 키워드만 떼면 클래식 스크립트로 실행된다.
+        parts.push(text.replace(/^export\s+/gm, ''));
+      }
+
+      return (
+        parts.join('\n') +
+        '\n;globalThis.__mangaRules = {' +
+        ' selectContentImages: selectContentImages,' +
+        ' collectDescriptors: collectDescriptors };'
+      );
+    })();
+  }
+  return rulesSourcePromise;
+}
+
 export default function mangaProxyPlugin() {
   return {
     name: 'manga-proxy',
@@ -253,6 +316,104 @@ export default function mangaProxyPlugin() {
           res.end(html);
         } catch (err) {
           sendJson(res, 502, { ok: false, error: err.message });
+        }
+      });
+
+      /* ---------------------------------------------------------------- */
+      /* 헤드리스 렌더링 — JS 로 이미지를 채우는 사이트용                   */
+      /*                                                                  */
+      /* fetch-page 는 서버가 받은 HTML 만 본다. 컷을 JS 가 나중에 채우면    */
+      /* 거기엔 아무것도 없다. 그때 실제 브라우저로 열어 렌더된 DOM 을 읽는다.*/
+      /* 덕분에 주소 하나만 넣으면 그런 사이트도 된다 (북마클릿 불필요).      */
+      /*                                                                  */
+      /* 선별 규칙은 북마클릿이 쓰는 것과 같은 소스를 주입한다.              */
+      /* 사본을 만들지 않으려고 collector 의 BUNDLED 를 그대로 재사용한다.   */
+      /* ---------------------------------------------------------------- */
+      server.middlewares.use('/api/render-page', async (req, res) => {
+        if (handlePreflight(req, res)) return;
+
+        const targetUrl = new URL(req.url, 'http://localhost').searchParams.get('url');
+        if (!targetUrl) {
+          sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
+          return;
+        }
+
+        let page = null;
+        try {
+          const parsed = assertFetchableUrl(targetUrl, isLoopbackRequester(req));
+          const browser = await getBrowser();
+
+          page = await browser.newPage({
+            userAgent: BROWSER_UA,
+            viewport: { width: 1280, height: 1600 },
+            locale: 'ko-KR',
+          });
+
+          // 규칙 주입이 실패하면 원인을 로그로 남긴다 (조용히 실패하면 진단이 불가능)
+          page.on('pageerror', (e) =>
+            server.config.logger.warn('[manga-proxy] 페이지 오류: ' + String(e).slice(0, 300))
+          );
+
+          /**
+           * 규칙을 페이지 전역에 올린다. CDP 주입이라 페이지 CSP 를 타지 않고,
+           * 함수 선언이 그대로 전역이 되어 evaluate 에서 바로 부를 수 있다.
+           * (new Function 으로 감싸면 선언이 그 스코프에 갇힌다)
+           */
+          // 규칙 주입. CDP 로 넣으므로 페이지 CSP 를 타지 않는다.
+          await page.addInitScript({ content: await getRulesSource() });
+
+          await page.goto(parsed.href, {
+            waitUntil: 'domcontentloaded',
+            timeout: FETCH_TIMEOUT_MS,
+          });
+
+          // 컷을 채울 시간 + lazy 로드를 깨우는 스크롤
+          await page.waitForTimeout(1200);
+          await page.evaluate(async () => {
+            const step = Math.max(window.innerHeight, 800);
+            for (let y = 0; y < document.body.scrollHeight && y < step * 40; y += step) {
+              window.scrollTo(0, y);
+              await new Promise((r) => setTimeout(r, 90));
+            }
+            window.scrollTo(0, 0);
+          });
+          await page.waitForTimeout(600);
+
+          const result = await page.evaluate(() => {
+            // addInitScript 로 올려둔 전역 규칙을 그대로 쓴다
+            const R = globalThis.__mangaRules;
+            if (!R) throw new Error('규칙 주입 실패 (globalThis.__mangaRules 없음)');
+            const pages = R.selectContentImages(R.collectDescriptors(document), location.href);
+
+            const findLink = (re) => {
+              const here = location.href.split('#')[0];
+              const anchors = document.querySelectorAll('a[href]');
+              for (let i = 0; i < anchors.length; i++) {
+                const a = anchors[i];
+                const text = (a.textContent || '').trim();
+                if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
+                if (a.href.split('#')[0] === here) continue;
+                return a.href;
+              }
+              return null;
+            };
+
+            return {
+              title: (document.title || '').split(/[|>]/)[0].trim(),
+              pages,
+              prevUrl: findLink(/이전화|이전\s*화|prev/i),
+              nextUrl: findLink(/다음화|다음\s*화|next/i),
+            };
+          });
+
+          server.config.logger.info(
+            `[manga-proxy] 헤드리스 렌더 ${result.pages.length}장: ${result.title}`
+          );
+          sendJson(res, 200, { ok: true, ...result });
+        } catch (err) {
+          sendJson(res, 502, { ok: false, error: err.message });
+        } finally {
+          if (page) await page.close().catch(() => {});
         }
       });
 

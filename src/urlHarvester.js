@@ -110,13 +110,8 @@ export class UrlHarvester {
      * "3장 불러왔습니다" 처럼 엉뚱한 성공을 보고한다. 그게 더 나쁘다.
      */
     if (looksJsRendered(doc)) {
-      const err = new Error(
-        '이 페이지는 이미지를 브라우저에서 나중에 불러옵니다.\n' +
-          '서버가 받은 HTML 에는 컷이 없어서 주소만으로는 안 됩니다.\n' +
-          '불러오기 창의 "주소로 안 잡히는 사이트라면" 을 열어 북마클릿을 쓰세요.'
-      );
-      err.needsBookmarklet = true;
-      throw err;
+      // 서버가 실제 브라우저로 열어 렌더된 DOM 을 읽는다. 주소 하나로 끝난다.
+      return await UrlHarvester.renderFromUrl(targetUrl);
     }
 
     // DOM → 서술자 → 규칙. 규칙 자체는 core 에만 있다
@@ -144,6 +139,47 @@ export class UrlHarvester {
         findAdjacentLink(doc, /다음화|다음\s*화|next/i, parsedUrl.origin, targetUrl) ||
         bumpEpisodeParam(targetUrl, +1),
       pages: toPages(imageUrls, targetUrl),
+    };
+  }
+
+  /**
+   * 서버가 헤드리스 브라우저로 페이지를 열어 렌더된 DOM 에서 컷을 읽는다.
+   *
+   * 이미지를 JS 로 채우는 사이트는 HTML 만 봐선 알 수 없다. fetchFromUrl 이
+   * 그런 페이지를 감지하면 여기로 넘긴다 — 사용자는 주소만 넣으면 된다.
+   *
+   * 한계: 서버의 브라우저에는 사용자의 로그인 세션이 없다. 로그인이 필요한
+   * 페이지는 여전히 북마클릿(사용자 브라우저)만 가능하다.
+   */
+  static async renderFromUrl(targetUrl) {
+    const res = await fetch(`/api/render-page?url=${encodeURIComponent(targetUrl)}`);
+
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      throw new Error('헤드리스 렌더링 응답을 읽지 못했습니다.');
+    }
+
+    if (!res.ok || !body.ok) {
+      throw new Error(body && body.error ? body.error : `렌더링 실패 (${res.status})`);
+    }
+
+    if (!body.pages || body.pages.length === 0) {
+      const err = new Error(
+        '브라우저로 열어봤지만 이미지를 찾지 못했습니다.\n' +
+          '로그인이 필요한 페이지라면 북마클릿을 쓰세요 (서버에는 로그인 세션이 없습니다).'
+      );
+      err.needsBookmarklet = true;
+      throw err;
+    }
+
+    return {
+      title: body.title || '불러온 만화',
+      targetUrl,
+      prevUrl: body.prevUrl || bumpEpisodeParam(targetUrl, -1),
+      nextUrl: body.nextUrl || bumpEpisodeParam(targetUrl, +1),
+      pages: toPages(body.pages, targetUrl),
     };
   }
 

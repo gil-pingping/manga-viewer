@@ -10,6 +10,7 @@
     "test": "node test/image-rules-check.mjs && node test/layout-check.mjs && node test/chapter-nav-check.mjs && node test/bookmarklet-check.mjs && node test/proxy-guard-check.mjs && node test/harvester-check.mjs"
   },
   "devDependencies": {
+    "playwright-core": "^1.62.1",
     "vite": "^8.2.0"
   },
   "dependencies": {
