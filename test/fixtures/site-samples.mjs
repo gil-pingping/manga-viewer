@@ -177,4 +177,58 @@ export const SHAPED_GALLERY = {
   ],
 };
 
-export const ALL_FIXTURES = [NAVER_WEBTOON, PINTEREST_GRID, AD_SHAPES, SHAPED_GALLERY];
+/* ==================================================================== */
+/* 컨테이너형 뷰어 — 본문이 전용 컨테이너에 담기고 페이지 번호가 붙는다   */
+/*                                                                      */
+/* 관찰한 구조:                                                          */
+/*   div.theme-viewer-images[data-theme-viewer-images]                   */
+/*     > div.theme-viewer-image[data-theme-page="1"]  (img 또는 배경)     */
+/* 컨테이너 밖은 머리말·내비·추천이다. 파일명 추측이 필요 없다.            */
+/* ==================================================================== */
+
+const CH8 = 'https://cdn.example.test/data/file/ch8/';
+
+/** 컨테이너 안에서 수집된 서술자 (fromDocument 가 pageIndex 를 채워준다) */
+function pageOf(n, viaBackground) {
+  const url = `${CH8}${String(n).padStart(3, '0')}.svg`;
+  const base = {
+    tag: 'DIV',
+    src: null,
+    dataSrc: null,
+    dataOriginal: null,
+    srcset: null,
+    width: null,
+    height: null,
+    naturalWidth: 800,
+    naturalHeight: 1200,
+    offsetWidth: 800,
+    offsetHeight: 1200,
+    pageIndex: n,
+    want: true,
+    note: viaBackground ? '본문 (배경 이미지)' : '본문 (img)',
+  };
+  return viaBackground ? { ...base, bgImage: url } : { ...base, tag: 'IMG', src: url };
+}
+
+export const CONTAINER_VIEWER = {
+  label: '컨테이너형 뷰어',
+  pageUrl: 'https://example.test/viewer.html',
+  origin: 'https://example.test',
+  elements: [
+    // 문서 순서를 일부러 뒤섞어 둔다 — pageIndex 로 세워야 한다
+    pageOf(3, false),
+    pageOf(1, false),
+    pageOf(2, true),
+    pageOf(5, false),
+    pageOf(4, true),
+    pageOf(6, true),
+  ],
+};
+
+export const ALL_FIXTURES = [
+  NAVER_WEBTOON,
+  PINTEREST_GRID,
+  AD_SHAPES,
+  SHAPED_GALLERY,
+  CONTAINER_VIEWER,
+];

@@ -15,6 +15,7 @@ import {
   upgradeResolution,
   MIN_SHORT_SIDE,
   explainSelection,
+  sortByExplicitPage,
   filenameShape,
   findDominantShape,
 } from '../src/core/imageRules.js';
@@ -23,6 +24,7 @@ import {
   PINTEREST_GRID,
   AD_SHAPES,
   SHAPED_GALLERY,
+  CONTAINER_VIEWER,
 } from './fixtures/site-samples.mjs';
 
 let passed = 0;
@@ -326,6 +328,70 @@ check('연번이 있으면 연번이 우선한다 (모양 규칙보다)', () => 
 check('모양 규칙이 네이버·Pinterest 결과를 바꾸지 않는다', () => {
   assert.equal(selectContentImages(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl).length, 8);
   assert.equal(selectContentImages(PINTEREST_GRID.elements, PINTEREST_GRID.pageUrl).length, 7);
+  assert.equal(explainSelection(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl).method, '연번 구간');
+});
+
+console.log('\n컨테이너형 뷰어 (사이트가 페이지 번호를 준다)');
+
+check('본문 전부 살고 pageIndex 순으로 세워진다', () => {
+  const r = auditFixture(CONTAINER_VIEWER);
+  assert.deepEqual(r.missing.map((e) => e.note), []);
+  assert.deepEqual(r.leaked, []);
+  assert.equal(r.got.length, 6);
+  const nums = r.got.map((u) => parseInt(u.split('/').pop(), 10));
+  assert.deepEqual(nums, [1, 2, 3, 4, 5, 6], '문서 순서가 뒤섞여도 번호순이어야 한다');
+});
+
+check('background-image 로 그린 컷도 잡는다', () => {
+  const got = selectContentImages(CONTAINER_VIEWER.elements, CONTAINER_VIEWER.pageUrl);
+  // 짝수 페이지가 배경 이미지로 그려진 것들이다
+  for (const n of [2, 4, 6]) {
+    assert.ok(got.some((u) => u.endsWith(`00${n}.svg`)), `${n}번이 빠졌다`);
+  }
+});
+
+check('선별 방법으로 "사이트 페이지 번호"가 보고된다', () => {
+  const d = explainSelection(CONTAINER_VIEWER.elements, CONTAINER_VIEWER.pageUrl);
+  assert.equal(d.method, '사이트 페이지 번호');
+  assert.equal(d.kept, 6);
+});
+
+check('번호가 3개 미만이면 인정하지 않는다', () => {
+  const entries = [
+    { url: 'https://x.test/a.jpg', pageIndex: 1 },
+    { url: 'https://x.test/b.jpg', pageIndex: 2 },
+  ];
+  assert.equal(sortByExplicitPage(entries), null);
+});
+
+check('번호가 절반 미만이면 인정하지 않는다 (우연 방지)', () => {
+  const entries = [
+    { url: 'https://x.test/a.jpg', pageIndex: 1 },
+    { url: 'https://x.test/b.jpg', pageIndex: 2 },
+    { url: 'https://x.test/c.jpg', pageIndex: 3 },
+    { url: 'https://x.test/d.jpg', pageIndex: null },
+    { url: 'https://x.test/e.jpg', pageIndex: null },
+    { url: 'https://x.test/f.jpg', pageIndex: null },
+    { url: 'https://x.test/g.jpg', pageIndex: null },
+  ];
+  assert.equal(sortByExplicitPage(entries), null);
+});
+
+check('페이지 번호가 연번·모양 규칙보다 우선한다', () => {
+  // 파일명은 연번(p001..)이지만 번호가 반대로 붙어 있다 -> 번호를 따라야 한다
+  const els = [
+    { src: 'https://x.test/c/p001.jpg', naturalWidth: 800, naturalHeight: 1200, pageIndex: 3 },
+    { src: 'https://x.test/c/p002.jpg', naturalWidth: 800, naturalHeight: 1200, pageIndex: 2 },
+    { src: 'https://x.test/c/p003.jpg', naturalWidth: 800, naturalHeight: 1200, pageIndex: 1 },
+  ];
+  const got = selectContentImages(els, 'https://x.test/');
+  assert.deepEqual(got.map((u) => u.split('/').pop()), ['p003.jpg', 'p002.jpg', 'p001.jpg']);
+});
+
+check('기존 사이트 결과가 바뀌지 않는다', () => {
+  assert.equal(selectContentImages(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl).length, 8);
+  assert.equal(selectContentImages(PINTEREST_GRID.elements, PINTEREST_GRID.pageUrl).length, 7);
+  assert.equal(selectContentImages(SHAPED_GALLERY.elements, SHAPED_GALLERY.pageUrl).length, 8);
   assert.equal(explainSelection(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl).method, '연번 구간');
 });
 

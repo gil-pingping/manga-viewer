@@ -25,8 +25,13 @@ const BUNDLED = [
   rules.findNumberedSeries,
   rules.filenameShape, // findDominantShape 가 쓴다
   rules.findDominantShape,
+  rules.sortByExplicitPage,
   rules.keepDominantDirectory,
   rules.selectContentImages,
+  dom.backgroundImageUrl, // findContentRoot·toDescriptor 가 쓴다
+  dom.countImageish, // findContentRoot 가 쓴다
+  dom.findContentRoot,
+  dom.inheritedPageIndex, // collectDescriptors 가 쓴다
   dom.toDescriptor,
   dom.collectDescriptors,
 ];
@@ -39,6 +44,8 @@ function bundledConstants() {
     `var JUNK_PATTERN = ${rules.JUNK_PATTERN.toString()};`,
     `var NOT_IMAGE_EXT = ${rules.NOT_IMAGE_EXT.toString()};`,
     `var IMAGE_NODE_SELECTOR = ${JSON.stringify(dom.IMAGE_NODE_SELECTOR)};`,
+    `var CONTENT_ROOT_SELECTORS = ${JSON.stringify(dom.CONTENT_ROOT_SELECTORS)};`,
+    `var PAGE_INDEX_ATTRS = ${JSON.stringify(dom.PAGE_INDEX_ATTRS)};`,
   ].join('\n');
 }
 

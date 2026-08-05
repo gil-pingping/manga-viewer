@@ -48,6 +48,8 @@ export function pickSource(el) {
     el.dataEcho,
     largestFromSrcset(el.srcset),
     el.src,
+    // <img> 없이 CSS 배경으로 컷을 그리는 뷰어도 있다
+    el.bgImage,
   ];
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i];
@@ -262,6 +264,26 @@ export function findDominantShape(urls) {
 }
 
 /**
+ * 사이트가 페이지 번호를 직접 알려준 경우 (`data-theme-page="1"` 등).
+ *
+ * 이게 가장 확실한 근거다 — 파일명을 추측할 필요가 없다. 뷰어가 컷을
+ * 전용 컨테이너에 담고 각 칸에 번호를 매겨두는 구조에서 나온다.
+ *
+ * 번호가 붙은 것이 3개 이상이고 전체의 절반 이상이어야 인정한다.
+ * 한두 개만 붙어 있으면 본문 표식이 아니라 우연이다.
+ */
+export function sortByExplicitPage(entries) {
+  const numbered = entries.filter((e) => typeof e.pageIndex === 'number');
+  if (numbered.length < 3) return null;
+  if (numbered.length < entries.length * 0.5) return null;
+
+  return numbered
+    .slice()
+    .sort((a, b) => a.pageIndex - b.pageIndex)
+    .map((e) => e.url);
+}
+
+/**
  * 한 화의 컷들은 같은 디렉터리에 몰려 있다.
  * 연번·모양을 못 찾았을 때 쓰는 마지막 차선책.
  *
@@ -309,10 +331,11 @@ export function explainSelection(elements, baseUrl) {
   };
   const seen = {};
   const picked = [];
+  const entries = [];
 
   for (let i = 0; i < elements.length; i++) {
     const el = elements[i];
-    const label = (el.src || el.dataSrc || el.dataOriginal || '(빈 요소)').slice(0, 90);
+    const label = (el.src || el.dataSrc || el.dataOriginal || el.bgImage || '(빈 요소)').slice(0, 90);
 
     const raw = pickSource(el);
     if (!raw) {
@@ -345,20 +368,30 @@ export function explainSelection(elements, baseUrl) {
     }
     seen[url] = 1;
     picked.push(url);
+    entries.push({ url, pageIndex: typeof el.pageIndex === 'number' ? el.pageIndex : null });
   }
 
-  const series = findNumberedSeries(picked);
-  const shaped = series ? null : findDominantShape(picked);
-  const final = series || shaped || keepDominantDirectory(picked);
+  // selectContentImages 와 **같은 순서**로 판정해야 진단이 실제와 어긋나지 않는다
+  const byPage = sortByExplicitPage(entries);
+  const series = byPage ? null : findNumberedSeries(picked);
+  const shaped = byPage || series ? null : findDominantShape(picked);
+  const final = byPage || series || shaped || keepDominantDirectory(picked);
 
   const finalSet = {};
   for (let i = 0; i < final.length; i++) finalSet[final[i]] = 1;
 
   const groupedOut = picked.filter((u) => !finalSet[u]);
-  const groupStage = series ? '연번구간밖' : shaped ? '다른모양' : '다른폴더';
+  const groupStage = byPage
+    ? '번호없음'
+    : series
+      ? '연번구간밖'
+      : shaped
+        ? '다른모양'
+        : '다른폴더';
 
   let method = '전부 통과';
-  if (series) method = '연번 구간';
+  if (byPage) method = '사이트 페이지 번호';
+  else if (series) method = '연번 구간';
   else if (shaped) method = '파일명 모양';
   else if (picked.length !== final.length) method = '디렉터리 다수결';
 
@@ -384,7 +417,7 @@ export function explainSelection(elements, baseUrl) {
  */
 export function selectContentImages(elements, baseUrl) {
   const seen = {};
-  const picked = [];
+  const entries = [];
 
   for (let i = 0; i < elements.length; i++) {
     const el = elements[i];
@@ -402,12 +435,20 @@ export function selectContentImages(elements, baseUrl) {
     const url = upgradeResolution(abs);
     if (seen[url]) continue; // 해상도 승격 후에 중복을 판정한다
     seen[url] = 1;
-    picked.push(url);
+    entries.push({ url, pageIndex: typeof el.pageIndex === 'number' ? el.pageIndex : null });
   }
 
+  const picked = entries.map((e) => e.url);
+
   // 확실한 순서대로 시도한다:
-  //  1) 연번      p001.jpg 처럼 번호가 이어진다 (페이지 순서까지 얻는다)
-  //  2) 파일명 모양  시각_해시.png 처럼 업로더가 같은 규칙으로 뽑은 덩어리
-  //  3) 디렉터리   그냥 같은 폴더에 몰려 있다
-  return findNumberedSeries(picked) || findDominantShape(picked) || keepDominantDirectory(picked);
+  //  0) 사이트가 준 페이지 번호   data-theme-page="1" — 추측이 아니라 선언이다
+  //  1) 연번                    p001.jpg (페이지 순서까지 얻는다)
+  //  2) 파일명 모양              시각_해시.png (같은 규칙으로 뽑힌 덩어리)
+  //  3) 디렉터리                 그냥 같은 폴더에 몰려 있다
+  return (
+    sortByExplicitPage(entries) ||
+    findNumberedSeries(picked) ||
+    findDominantShape(picked) ||
+    keepDominantDirectory(picked)
+  );
 }
