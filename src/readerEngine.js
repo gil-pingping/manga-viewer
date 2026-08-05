@@ -11,8 +11,15 @@
  * 세로로 긴 웹툰을 페이지로 쪼개면 읽기가 불편하므로 strip 을 자동으로 택한다.
  */
 
-const SPREAD_RATIO = 1.15; // 폭이 높이보다 이만큼 크면 펼침(양면) 컷
-const STRIP_RATIO = 1.8; // 높이가 폭보다 이만큼 크면 세로 스크롤 웹툰
+import {
+  resolveMode,
+  resolveVisiblePages as resolveVisible,
+  pageStep as computePageStep,
+  nextIndex,
+  prevIndex,
+  isSpreadRatio,
+} from './core/layout.js';
+
 const MAX_CACHED_IMAGES = 28;
 const PRELOAD_AHEAD = 4;
 const PRELOAD_BEHIND = 2;
@@ -85,19 +92,14 @@ export class ReaderEngine {
   /* 모드 판정                                                           */
   /* ------------------------------------------------------------------ */
 
+  /** 배치 판정은 core/layout 에 있다 (순수 함수라 테스트된다) */
   getEffectiveMode() {
-    if (this.mode !== 'auto') return this.mode;
-
-    // 측정된 비율이 세로로 길면 웹툰 → 연속 스크롤
-    if (this.measuredRatios.length > 0) {
-      const tallCount = this.measuredRatios.filter((r) => r.h / r.w >= STRIP_RATIO).length;
-      if (tallCount / this.measuredRatios.length >= 0.5) return 'strip';
-    }
-
-    // 8.4인치에서 두 장 펼침은 가로로 충분히 넓을 때만 읽을 만하다
-    const isLandscapeEnough =
-      window.innerWidth >= 900 && window.innerWidth / window.innerHeight > 1.1;
-    return isLandscapeEnough ? 'double' : 'single';
+    return resolveMode({
+      mode: this.mode,
+      ratios: this.measuredRatios,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
   }
 
   setMode(newMode) {
@@ -164,7 +166,7 @@ export class ReaderEngine {
     page.__measured = true;
 
     const wasSpread = page.isSpread === true;
-    const isSpread = w / h >= SPREAD_RATIO;
+    const isSpread = isSpreadRatio(w, h);
     page.isSpread = isSpread;
 
     // 화면에 걸린 페이지의 펼침 여부가 바뀌었거나 auto 모드 판정이 흔들리면 다시 그린다
@@ -220,15 +222,21 @@ export class ReaderEngine {
       return;
     }
 
-    const step = this.pageStep();
-    if (this.currentIndex + step < this.pages.length) {
-      this.currentIndex += step;
-      this.triggerAnimation('next');
-      this.render();
-    } else {
+    const target = nextIndex({
+      pages: this.pages,
+      index: this.currentIndex,
+      mode: this.getEffectiveMode(),
+      visibleCount: this.visibleCount,
+    });
+
+    if (target === null) {
       this.stopAutoPlay();
       this.onEpisodeEnd();
+      return;
     }
+    this.currentIndex = target;
+    this.triggerAnimation('next');
+    this.render();
   }
 
   prevPage() {
@@ -242,8 +250,14 @@ export class ReaderEngine {
       return;
     }
 
-    if (this.currentIndex === 0) return;
-    this.currentIndex = Math.max(0, this.currentIndex - this.pageStep());
+    const target = prevIndex({
+      index: this.currentIndex,
+      mode: this.getEffectiveMode(),
+      visibleCount: this.visibleCount,
+    });
+    if (target === null) return;
+
+    this.currentIndex = target;
     this.triggerAnimation('prev');
     this.render();
   }
@@ -253,8 +267,7 @@ export class ReaderEngine {
    * 한 장만 띄웠는데 두 장씩 넘기면 중간 페이지가 조용히 건너뛰어진다.
    */
   pageStep() {
-    if (this.getEffectiveMode() !== 'double') return 1;
-    return this.visibleCount || 1;
+    return computePageStep({ mode: this.getEffectiveMode(), visibleCount: this.visibleCount });
   }
 
   goToPage(pageNumber) {
@@ -388,31 +401,12 @@ export class ReaderEngine {
    * 두 장 펼침에서는 첫 장을 홀로 두어(표지) 이후 짝이 원본과 맞게 떨어지도록 한다.
    */
   resolveVisiblePages(mode) {
-    const idx = this.currentIndex;
-    const current = this.pages[idx];
-    if (!current) return [];
-
-    if (mode === 'single' || current.isSpread || idx === 0) {
-      return [{ page: current, index: idx }];
-    }
-
-    const firstOfPair = idx % 2 === 1 ? idx : idx - 1;
-    const a = this.pages[firstOfPair];
-    const b = this.pages[firstOfPair + 1];
-
-    if (!a || !b) return [{ page: current, index: idx }];
-
-    // 펼침 컷은 절대 다른 페이지와 나란히 놓지 않는다.
-    // 짝 후보 어느 쪽이든 펼침이면 지금 페이지를 홀로 띄우고,
-    // 다음 짝은 그 다음 페이지부터 다시 맞춰진다.
-    if (a.isSpread || b.isSpread) return [{ page: current, index: idx }];
-
-    const pair = [
-      { page: a, index: firstOfPair },
-      { page: b, index: firstOfPair + 1 },
-    ];
-    // RTL(일본 만화)은 오른쪽이 먼저이므로 배치를 뒤집는다
-    return this.direction === 'RTL' ? pair.reverse() : pair;
+    return resolveVisible({
+      pages: this.pages,
+      index: this.currentIndex,
+      mode,
+      direction: this.direction,
+    });
   }
 
   retryPage(index) {
