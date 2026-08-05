@@ -162,7 +162,23 @@ export class UrlHarvester {
     }
 
     if (!res.ok || !body.ok) {
-      throw new Error(body && body.error ? body.error : `렌더링 실패 (${res.status})`);
+      const reason = body && body.error ? body.error : `렌더링 실패 (${res.status})`;
+
+      /**
+       * 헤드리스가 아예 없는 기기도 있다 — 태블릿(Termux)에는 Chrome 을 못 깐다.
+       * "Chrome 을 설치하세요"는 그 기기에서 할 수 없는 일이라 안내가 아니다.
+       * 그 자리에서 실제로 되는 길(북마클릿)을 알려준다.
+       */
+      if (/브라우저를 띄우지 못했습니다/.test(reason)) {
+        const err = new Error(
+          '이 사이트는 이미지를 나중에 불러오는데, 이 기기에서는 서버가 대신 열어볼 수 없습니다.\n' +
+            '불러오기 창의 북마클릿을 쓰세요 — 브라우저에서 그 만화를 열고 북마클릿을 누르면 됩니다.'
+        );
+        err.needsBookmarklet = true;
+        throw err;
+      }
+
+      throw new Error(reason);
     }
 
     if (!body.pages || body.pages.length === 0) {

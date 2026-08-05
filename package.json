@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "serve": "vite build && vite preview --host --port 4173",
+    "serve": "vite build && vite preview --port 4173",
     "test": "node test/image-rules-check.mjs && node test/layout-check.mjs && node test/chapter-nav-check.mjs && node test/bookmarklet-check.mjs && node test/proxy-guard-check.mjs && node test/harvester-check.mjs && node test/library-check.mjs"
   },
   "devDependencies": {
