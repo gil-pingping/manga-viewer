@@ -231,33 +231,47 @@ function revokeObjectUrls() {
  * 프록시(=맥북 서버)가 죽어 있어도 읽힌다. 태블릿 단독 사용의 핵심 지점이 여기다.
  * 한 장이라도 빠진 부분 저장이면 resolveOffline 이 null 을 주고 온라인 경로를 쓴다.
  */
+let openToken = 0;
+
 async function openChapter(chapterId, pageNumber) {
   const chapter = state.chapters.find((c) => c.id === chapterId);
   if (!chapter) return;
 
-  revokeObjectUrls();
+  /**
+   * 서재 조회에 await 가 있어서 두 화를 연달아 누르면 호출이 겹친다.
+   * 늦게 시작한 쪽이 먼저 시작한 쪽의 blob 주소를 놓아버리면 빈 컷이 되고,
+   * 그건 "고장난 앱"으로 보인다. 마지막 호출만 화면을 만지게 한다.
+   */
+  const token = ++openToken;
 
   /**
    * 엔진에 넘길 판. chapter.pages 는 절대 덮지 않는다 — 그 주소가 서재의 키다.
    * blob 주소로 갈아끼워 저장해버리면 두 번째로 열 때 조회가 빗나간다.
    */
-  let forEngine = chapter;
+  let offline = null;
 
   // 로컬 파일·데이터 URL 은 프록시를 안 타므로 서재를 볼 필요가 없다
   const proxied = (chapter.pages || []).some((p) => p.url?.startsWith('/api/'));
   if (proxied && state.saved.has(chapter.id)) {
     try {
-      const offline = await library.resolveOffline(chapter);
-      if (offline) {
-        state.objectUrls = offline;
-        forEngine = {
-          ...chapter,
-          pages: offline.map((url, i) => ({ ...chapter.pages[i], url })),
-        };
-      }
+      offline = await library.resolveOffline(chapter);
     } catch (err) {
       console.warn('[서재] 저장된 이미지를 꺼내지 못했습니다', err);
     }
+  }
+
+  // 기다리는 동안 다른 화를 눌렀으면 이 호출은 물러난다. 자기가 만든 주소만 치운다
+  if (token !== openToken) {
+    offline?.forEach((u) => URL.revokeObjectURL(u));
+    return;
+  }
+
+  // 이긴 호출만 화면 상태를 만진다. 앞 챕터 주소를 놓아주는 것도 여기서
+  revokeObjectUrls();
+  let forEngine = chapter;
+  if (offline) {
+    state.objectUrls = offline;
+    forEngine = { ...chapter, pages: offline.map((url, i) => ({ ...chapter.pages[i], url })) };
   }
 
   document.getElementById('app').classList.remove('is-empty');
