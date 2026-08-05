@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="만화 뷰어">
+  <rect width="512" height="512" rx="112" fill="#0b0c0e"/>
+  <!-- 펼친 두 장 (RTL 스프레드) -->
+  <g fill="none" stroke="#7aa2f7" stroke-width="22" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M256 138c-30-22-72-34-118-34-14 0-26 1-36 3v264c10-2 22-3 36-3 46 0 88 12 118 34z"/>
+    <path d="M256 138c30-22 72-34 118-34 14 0 26 1 36 3v264c-10-2-22-3-36-3-46 0-88 12-118 34z"/>
+    <path d="M256 138v264"/>
+  </g>
+  <!-- 컷 분할선 — 만화라는 표시 -->
+  <g stroke="#7aa2f7" stroke-width="14" stroke-linecap="round" opacity=".5">
+    <path d="M150 196h62M150 250h62M300 196h62M300 278h62"/>
+  </g>
+</svg>

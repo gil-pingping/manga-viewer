@@ -10,6 +10,7 @@ import {
   resolveAdjacent,
   upsertChapter,
 } from './src/core/chapterNav.js';
+import * as library from './src/library.js';
 
 /* ==================================================================== */
 /* 상태                                                                  */
@@ -43,6 +44,10 @@ const state = {
   currentId: null,
   settings: loadSettings(),
   chromeVisible: true,
+  /** 서재에 저장된 챕터 메타 (id → record). 목록에 "담김" 표시를 하려고 들고 있다 */
+  saved: new Map(),
+  /** 지금 화면이 쓰고 있는 blob 주소들. 챕터를 바꿀 때 놓아줘야 메모리가 안 샌다 */
+  objectUrls: [],
 };
 
 let engine = null;
@@ -92,6 +97,9 @@ const el = {
   modalSettings: $('modal-settings'),
 
   epList: $('episode-list'),
+  libUsage: $('lib-usage'),
+  btnSave1: $('btn-save-1'),
+  btnSave10: $('btn-save-10'),
   rawInput: $('raw-input'),
   btnSubmitUrl: $('btn-submit-url'),
   bookmarkletUrl: $('bookmarklet-url'),
@@ -210,9 +218,47 @@ function showEmptyState() {
   });
 }
 
-function openChapter(chapterId, pageNumber) {
+/** 앞 챕터가 쓰던 blob 주소를 놓아준다 */
+function revokeObjectUrls() {
+  state.objectUrls.forEach((u) => URL.revokeObjectURL(u));
+  state.objectUrls = [];
+}
+
+/**
+ * 챕터를 연다.
+ *
+ * 서재에 저장돼 있으면 이미지 바이트를 꺼내 blob 주소로 갈아끼운다. 그래야
+ * 프록시(=맥북 서버)가 죽어 있어도 읽힌다. 태블릿 단독 사용의 핵심 지점이 여기다.
+ * 한 장이라도 빠진 부분 저장이면 resolveOffline 이 null 을 주고 온라인 경로를 쓴다.
+ */
+async function openChapter(chapterId, pageNumber) {
   const chapter = state.chapters.find((c) => c.id === chapterId);
   if (!chapter) return;
+
+  revokeObjectUrls();
+
+  /**
+   * 엔진에 넘길 판. chapter.pages 는 절대 덮지 않는다 — 그 주소가 서재의 키다.
+   * blob 주소로 갈아끼워 저장해버리면 두 번째로 열 때 조회가 빗나간다.
+   */
+  let forEngine = chapter;
+
+  // 로컬 파일·데이터 URL 은 프록시를 안 타므로 서재를 볼 필요가 없다
+  const proxied = (chapter.pages || []).some((p) => p.url?.startsWith('/api/'));
+  if (proxied && state.saved.has(chapter.id)) {
+    try {
+      const offline = await library.resolveOffline(chapter);
+      if (offline) {
+        state.objectUrls = offline;
+        forEngine = {
+          ...chapter,
+          pages: offline.map((url, i) => ({ ...chapter.pages[i], url })),
+        };
+      }
+    } catch (err) {
+      console.warn('[서재] 저장된 이미지를 꺼내지 못했습니다', err);
+    }
+  }
 
   document.getElementById('app').classList.remove('is-empty');
   el.slider.disabled = false;
@@ -230,7 +276,7 @@ function openChapter(chapterId, pageNumber) {
   el.btnNextEp.disabled = !hasAdjacent(1);
 
   const startAt = pageNumber ?? readProgress()[chapter.id] ?? 1;
-  engine.loadChapter(chapter, startAt);
+  engine.loadChapter(forEngine, startAt);
 }
 
 /**
@@ -290,6 +336,89 @@ async function goChapter(delta) {
   } finally {
     setBusy(false);
   }
+}
+
+/* ==================================================================== */
+/* 서재 (오프라인 저장)                                                   */
+/* ==================================================================== */
+
+/**
+ * 서재에 담기 = 이미지 바이트를 태블릿에 내려받기.
+ *
+ * 왜 지금 받아둬야 하나: 이미지 호스트가 Referer 를 본다(실측 403/200).
+ * 브라우저는 다른 오리진의 Referer 를 위조할 수 없으므로 프록시가 필수다.
+ * 담아두면 그 뒤로는 프록시가 없어도 읽힌다 — 태블릿 단독 사용의 답.
+ */
+async function refreshSaved() {
+  try {
+    const rows = await library.listChapters();
+    state.saved = new Map(rows.map((r) => [r.id, r]));
+  } catch (err) {
+    console.warn('[서재] 목록을 읽지 못했습니다', err);
+  }
+}
+
+/** 담을 수 없는 챕터(데모·로컬 파일)는 버튼을 내린다 */
+function canSave(chapter) {
+  return !!chapter && !chapter.isDemo && (chapter.pages || []).some((p) => p.url?.startsWith('/api/'));
+}
+
+async function saveOne(chapter, prefix = '') {
+  await library.saveChapter(chapter, {
+    onProgress: (i, total) => setBusy(true, `${prefix}${i}/${total}장 담는 중…`),
+  });
+}
+
+/**
+ * 지금 화부터 다음 화 방향으로 연달아 담는다.
+ *
+ * 회차 목록 페이지를 긁지 않는다 — 사이트마다 목록이 JS 데이터로만 있거나
+ * 구조가 달라서 범용 규칙이 안 선다(네이버는 헤드리스로도 회차 링크가 2개뿐이었다).
+ * 대신 이미 검증된 "다음 화 주소"를 그대로 따라간다. 번호가 매겨진 사이트면 다 된다.
+ */
+async function batchSave(count) {
+  let chapter = currentChapter();
+  if (!canSave(chapter)) {
+    toast('이 챕터는 담을 수 없습니다 (불러온 만화만 담깁니다).', { error: true });
+    return;
+  }
+
+  let done = 0;
+  let stopReason = null;
+
+  try {
+    for (let n = 0; n < count; n++) {
+      await saveOne(chapter, `${done + 1}/${count}화 · `);
+      done++;
+
+      if (n === count - 1) break;
+
+      if (!chapter.nextUrl) {
+        stopReason = '다음 화 주소가 없어 여기서 멈췄습니다.';
+        break;
+      }
+
+      setBusy(true, `${done + 1}/${count}화 불러오는 중…`);
+      const harvested = await UrlHarvester.fetchFromUrl(chapter.nextUrl);
+      const next = upsertChapter(state.chapters, harvested, `import-${Date.now()}-${n}`);
+      state.chapters = next.chapters;
+      chapter = next.chapter;
+    }
+  } catch (err) {
+    stopReason = err.message;
+  } finally {
+    await refreshSaved();
+    setBusy(false);
+  }
+
+  const bytes = [...state.saved.values()].reduce((sum, r) => sum + (r.bytes || 0), 0);
+  const head = done > 0 ? `${done}화 담았습니다 (서재 ${library.formatBytes(bytes)}).` : '담지 못했습니다.';
+  toast(stopReason ? `${head}\n${stopReason}` : head, {
+    error: done === 0,
+    duration: stopReason ? 8000 : 3000,
+  });
+
+  if (el.modalEpisodes.classList.contains('is-open')) renderEpisodeList();
 }
 
 /* ==================================================================== */
@@ -378,15 +507,48 @@ function closeAllModals() {
   document.querySelectorAll('.modal.is-open').forEach((m) => m.classList.remove('is-open'));
 }
 
+/** 서재 막대의 용량·안내 문구를 현황에 맞춘다 */
+function renderLibraryBar() {
+  const rows = [...state.saved.values()];
+  const bytes = rows.reduce((sum, r) => sum + (r.bytes || 0), 0);
+
+  el.libUsage.textContent =
+    rows.length === 0
+      ? '서재 비어 있음'
+      : `서재 ${rows.length}화 · ${library.formatBytes(bytes)}`;
+
+  /**
+   * 앱 껍데기 오프라인은 서비스워커가 필요하고, 그건 secure context 전용이다.
+   * LAN 주소로 붙었으면 담아둔 화는 읽히지만 앱을 여는 순간엔 서버가 필요하다.
+   * 조용히 다르게 동작하면 "왜 어제는 됐는데" 가 되므로 화면에 적어둔다.
+   */
+  const note = el.libUsage.nextElementSibling;
+  if (note) {
+    note.textContent = window.isSecureContext
+      ? '담아두면 서버 없이 이 태블릿에서만 읽힙니다.'
+      : '담아둔 화는 읽힙니다. 앱을 여는 것까지 서버 없이 하려면 localhost 나 https 로 접속해야 합니다.';
+  }
+
+  const savable = canSave(currentChapter());
+  el.btnSave1.disabled = !savable;
+  el.btnSave10.disabled = !savable;
+}
+
 function renderEpisodeList() {
+  renderLibraryBar();
+
   el.epList.replaceChildren(
     ...state.chapters.map((chapter) => {
       const isCurrent = chapter.id === state.currentId;
-      const saved = readProgress()[chapter.id];
+      const readTo = readProgress()[chapter.id];
+      const savedRow = state.saved.get(chapter.id);
 
-      const item = document.createElement('button');
-      item.type = 'button';
+      const item = document.createElement('div');
       item.className = `ep-item${isCurrent ? ' is-current' : ''}`;
+
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'ep-open';
 
       const info = document.createElement('div');
       const title = document.createElement('span');
@@ -394,18 +556,55 @@ function renderEpisodeList() {
       title.textContent = chapter.title || '제목 없음';
       const meta = document.createElement('span');
       meta.className = 'ep-meta';
-      meta.textContent = `${chapter.pages.length}장` + (saved ? ` · ${saved}쪽까지 읽음` : '');
+      meta.textContent =
+        `${chapter.pages.length}장` +
+        (readTo ? ` · ${readTo}쪽까지 읽음` : '') +
+        (chapter.isDemo ? ' · 데모' : '');
       info.append(title, meta);
 
-      const stateTag = document.createElement('span');
-      stateTag.className = 'ep-state';
-      stateTag.textContent = isCurrent ? '읽는 중' : '';
+      const tags = document.createElement('span');
+      tags.style.display = 'flex';
+      tags.style.gap = '6px';
+      tags.style.alignItems = 'center';
+      tags.style.flex = 'none';
 
-      item.append(info, stateTag);
-      item.addEventListener('click', () => {
+      // "담김" 딱지는 곧 "서버 없이 읽힘" 이라는 뜻이다 — 가장 중요한 정보라 크게 붙인다
+      if (savedRow) {
+        const badge = document.createElement('span');
+        badge.className = 'ep-badge';
+        badge.textContent = `담김 ${library.formatBytes(savedRow.bytes)}`;
+        tags.append(badge);
+      }
+      if (isCurrent) {
+        const stateTag = document.createElement('span');
+        stateTag.className = 'ep-state';
+        stateTag.textContent = '읽는 중';
+        tags.append(stateTag);
+      }
+
+      open.append(info, tags);
+      open.addEventListener('click', () => {
         openChapter(chapter.id);
         closeModal(el.modalEpisodes);
       });
+      item.append(open);
+
+      if (savedRow) {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'ep-del';
+        del.title = '서재에서 지우기';
+        del.setAttribute('aria-label', `${chapter.title || '이 화'} 서재에서 지우기`);
+        del.textContent = '✕';
+        del.addEventListener('click', async () => {
+          await library.deleteChapter(chapter.id);
+          await refreshSaved();
+          renderEpisodeList();
+          toast('서재에서 지웠습니다.');
+        });
+        item.append(del);
+      }
+
       return item;
     })
   );
@@ -641,6 +840,10 @@ function wireEvents() {
     toast('데모 페이지입니다. 실제 만화는 위 버튼으로 불러오세요.', { duration: 4000 });
   });
 
+  /* 서재에 담기 */
+  el.btnSave1.addEventListener('click', () => batchSave(1));
+  el.btnSave10.addEventListener('click', () => batchSave(10));
+
   /* 불러오기 */
   el.btnSubmitUrl.addEventListener('click', submitImport);
 
@@ -777,10 +980,62 @@ function applySettingsToUI() {
   });
 }
 
+/**
+ * 서비스워커를 등록해 앱 껍데기를 오프라인에서도 열리게 한다.
+ *
+ * secure context 전용이라 `http://<LAN IP>:5173` 에서는 등록 자체가 안 된다.
+ * 치명적이지 않다 — 서재(IndexedDB)는 그대로 돌고 껍데기만 서버가 필요해진다.
+ * 조용히 실패하면 나중에 "왜 오프라인이 안 되지"로 헤매므로 이유를 남긴다.
+ */
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+
+  if (!window.isSecureContext) {
+    console.info(
+      '[만화 뷰어] 오프라인 앱 껍데기는 https 또는 localhost 에서만 됩니다 ' +
+        `(지금: ${location.origin}). 담아둔 화는 그대로 읽힙니다.`
+    );
+    return;
+  }
+
+  try {
+    await navigator.serviceWorker.register('./sw.js', { scope: './' });
+  } catch (err) {
+    console.warn('[만화 뷰어] 서비스워커 등록 실패', err);
+  }
+}
+
+/**
+ * 서재에 담아둔 화를 목록에 올린다.
+ *
+ * 데모 앞에 꽂아 최근에 담은 것이 위로 온다. 이것이 "회차를 전체 보는" 목록의
+ * 실체다 — 새로고침해도 남고, 프록시가 죽어도 읽힌다.
+ */
+async function loadLibraryIntoList() {
+  await refreshSaved();
+
+  const restored = [...state.saved.values()].map((row) => ({
+    id: row.id,
+    title: row.title,
+    label: row.label || '담아둔 화',
+    pages: row.pages,
+    sourceUrl: row.sourceUrl,
+    prevUrl: row.prevUrl,
+    nextUrl: row.nextUrl,
+  }));
+
+  if (restored.length > 0) state.chapters = [...restored, ...state.chapters];
+}
+
 async function boot() {
   initEngine();
   applySettingsToUI();
   wireEvents();
+
+  // 브라우저가 공간이 부족할 때 서재를 조용히 비우지 않도록 미리 부탁한다
+  library.requestPersistence().catch(() => {});
+  registerServiceWorker();
+  await loadLibraryIntoList();
 
   // 뷰어 탭이 이미 열려 있는 상태로 #import= 만 바뀌면 스크립트가 다시 돌지 않는다.
   // (같은 문서 내 프래그먼트 이동) 그래서 hashchange 로도 한 번 더 받는다.
@@ -788,10 +1043,16 @@ async function boot() {
     if (/[#&]import=/.test(window.location.hash)) consumePendingImport();
   });
 
-  // 북마클릿으로 넘어온 게 있으면 그것을 열고, 없으면 빈 상태를 보여준다.
+  // 북마클릿으로 넘어온 게 있으면 그것을 열고, 없으면 서재의 최근 화를 연다.
   // 데모를 자동으로 열면 빈 컷 프레임이 "고장난 뷰어"처럼 보인다 — 데모는 목록에서 고른다.
   const imported = await consumePendingImport();
-  if (!imported) showEmptyState();
+
+  if (!imported) {
+    // 담아둔 화가 있으면 그것으로 시작한다. 서버 없이 켰을 때 바로 읽히는 게 맞다
+    const recent = state.chapters.find((c) => state.saved.has(c.id));
+    if (recent) await openChapter(recent.id);
+    else showEmptyState();
+  }
 
   showChrome();
 }

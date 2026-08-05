@@ -1072,17 +1072,52 @@ select.field {
   gap: 5px;
 }
 
-.ep-item {
+/* 서재 막대 — 목록 위에 얹히는 저장 현황 + 담기 버튼 */
+.lib-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  width: 100%;
-  padding: 13px 15px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface-2);
-  text-align: left;
+}
+
+.lib-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lib-usage strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lib-usage span {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.lib-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* 항목은 컨테이너(div)다 — 삭제 버튼을 품어야 하는데 버튼 중첩은 잘못된 HTML */
+.ep-item {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  overflow: hidden;
   transition: background 0.14s ease, border-color 0.14s ease;
 }
 
@@ -1093,6 +1128,43 @@ select.field {
 .ep-item.is-current {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.ep-open {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 13px 15px;
+  background: none;
+  text-align: left;
+}
+
+.ep-del {
+  flex: none;
+  width: 44px;
+  color: var(--text-muted);
+  background: none;
+  border-left: 1px solid var(--line);
+}
+
+.ep-del:hover {
+  color: #ff8080;
+  background: rgba(255, 128, 128, 0.1);
+}
+
+/* 담긴 화 표시 — 서버 없이 읽히는 것들 */
+.ep-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .ep-title {

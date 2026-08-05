@@ -215,9 +215,13 @@ function getRulesSource() {
 }
 
 export default function mangaProxyPlugin() {
-  return {
-    name: 'manga-proxy',
-    configureServer(server) {
+  /**
+   * dev 서버와 preview 서버가 같은 라우트를 공유한다.
+   *
+   * `configureServer` 는 `vite dev` 에만 걸린다. 빌드한 앱을 태블릿에서 직접
+   * 띄우는 것이 목표라 `vite preview` 에도 같은 미들웨어가 있어야 가져오기가 된다.
+   */
+  const mount = (server) => {
       /* ---------------------------------------------------------------- */
       /* 북마클릿 → 뷰어 인수인계                                          */
       /* ---------------------------------------------------------------- */
@@ -482,6 +486,11 @@ export default function mangaProxyPlugin() {
           res.end('이미지 중계 실패: ' + err.message);
         }
       });
-    },
+  };
+
+  return {
+    name: 'manga-proxy',
+    configureServer: mount,
+    configurePreviewServer: mount,
   };
 }
