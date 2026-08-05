@@ -5,7 +5,7 @@ import {
   NOT_IMAGE_EXT,
   JUNK_PATTERN,
 } from './core/imageRules.js';
-import { collectDescriptors } from './collect/fromDocument.js';
+import { collectDescriptors, looksJsRendered } from './collect/fromDocument.js';
 
 /**
  * 만화 이미지 수집기
@@ -103,6 +103,22 @@ export class UrlHarvester {
     }
 
     const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    /**
+     * 본문 컨테이너가 있는데 비어 있으면 컷은 브라우저가 나중에 채운다.
+     * 이때 문서 전체로 물러나면 머리말·추천 썸네일이 본문으로 뽑혀
+     * "3장 불러왔습니다" 처럼 엉뚱한 성공을 보고한다. 그게 더 나쁘다.
+     */
+    if (looksJsRendered(doc)) {
+      const err = new Error(
+        '이 페이지는 이미지를 브라우저에서 나중에 불러옵니다.\n' +
+          '서버가 받은 HTML 에는 컷이 없어서 주소만으로는 안 됩니다.\n' +
+          '불러오기 창의 "주소로 안 잡히는 사이트라면" 을 열어 북마클릿을 쓰세요.'
+      );
+      err.needsBookmarklet = true;
+      throw err;
+    }
+
     // DOM → 서술자 → 규칙. 규칙 자체는 core 에만 있다
     const descriptors = collectDescriptors(doc);
     const imageUrls = selectContentImages(descriptors, targetUrl);

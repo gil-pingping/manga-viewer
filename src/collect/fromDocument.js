@@ -40,6 +40,50 @@ export const CONTENT_ROOT_SELECTORS = [
   'main',
 ];
 
+/**
+ * "이건 본문 컨테이너다"라고 거의 확실히 말해주는 선택자들.
+ *
+ * CONTENT_ROOT_SELECTORS 의 앞부분과 같지만 `article`·`main`·`[class*="viewer"]`
+ * 같은 광범위한 것은 뺐다. 이 목록에 걸리는 컨테이너가 **비어 있으면**
+ * 페이지가 JS 로 컷을 채운다는 뜻이다.
+ */
+export const SPECIFIC_CONTENT_SELECTORS = [
+  '[data-theme-viewer-images]',
+  '.theme-viewer-images',
+  '#comic_view_area',
+  '.wt_viewer',
+  '#readerarea',
+  '.reading-content',
+  '.chapter-content',
+  '.viewer-images',
+];
+
+/**
+ * 서버가 받은 HTML 이 JS 렌더링 뷰어인지 판단한다.
+ *
+ * 왜 필요한가: 본문 컨테이너가 HTML 에 있는데 그 안이 비어 있으면 컷은
+ * 브라우저가 나중에 채운다. 이때 문서 전체로 물러나면 머리말·추천 썸네일이
+ * 본문으로 뽑혀 엉뚱한 이미지 몇 장을 성공이라고 보고한다.
+ * 실측: 추천 3장이 "같은 파일명 모양"이라 본문으로 선택됐다.
+ *
+ * 실패로 처리하고 북마클릿을 안내하는 편이 정직하다.
+ */
+export function looksJsRendered(root) {
+  for (let i = 0; i < SPECIFIC_CONTENT_SELECTORS.length; i++) {
+    let nodes;
+    try {
+      nodes = root.querySelectorAll(SPECIFIC_CONTENT_SELECTORS[i]);
+    } catch (e) {
+      continue;
+    }
+    for (let j = 0; j < nodes.length; j++) {
+      // 확실한 본문 컨테이너를 찾았다 → 그 안이 비면 JS 가 채우는 것이다
+      if (countImageish(nodes[j]) < 3) return true;
+    }
+  }
+  return false;
+}
+
 /** 사이트가 순서를 직접 알려주는 속성들 */
 export const PAGE_INDEX_ATTRS = ['data-theme-page', 'data-page', 'data-index', 'data-idx', 'data-no'];
 

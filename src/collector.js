@@ -45,6 +45,7 @@ function bundledConstants() {
     `var NOT_IMAGE_EXT = ${rules.NOT_IMAGE_EXT.toString()};`,
     `var IMAGE_NODE_SELECTOR = ${JSON.stringify(dom.IMAGE_NODE_SELECTOR)};`,
     `var CONTENT_ROOT_SELECTORS = ${JSON.stringify(dom.CONTENT_ROOT_SELECTORS)};`,
+    `var SPECIFIC_CONTENT_SELECTORS = ${JSON.stringify(dom.SPECIFIC_CONTENT_SELECTORS)};`,
     `var PAGE_INDEX_ATTRS = ${JSON.stringify(dom.PAGE_INDEX_ATTRS)};`,
   ].join('\n');
 }

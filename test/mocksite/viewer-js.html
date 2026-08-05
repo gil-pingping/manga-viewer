@@ -1,0 +1,35 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>목업 뷰어(JS 렌더) - 9화</title></head><body style="margin:0;background:#111">
+<div class="theme-viewer-wrap" id="theme-viewer-top">
+  <div class="theme-viewer-head"><img src="/img/head-promo.svg" width="900" height="240" alt=""></div>
+  <div class="theme-viewer-nav"><img src="/img/nav-prev.svg" width="300" height="300" alt=""></div>
+  <!-- 서버 HTML 에는 이 컨테이너가 비어 있다 -->
+  <div class="theme-viewer-images" data-theme-viewer-images></div>
+</div>
+<section class="recommend">
+  <img src="/img/reco1.svg" width="400" height="600" alt="">
+  <img src="/img/reco2.svg" width="400" height="600" alt="">
+  <img src="/img/reco3.svg" width="400" height="600" alt="">
+</section>
+<a href="/viewer-js.html?ch=8">이전화</a> <a href="/viewer-js.html?ch=10">다음화</a>
+<script>
+setTimeout(function () {
+  var box = document.querySelector('[data-theme-viewer-images]');
+  for (var i = 1; i <= 15; i++) {
+    var u = '/data/file/ch8/' + String(i).padStart(3, '0') + '.svg';
+    var d = document.createElement('div');
+    d.className = 'theme-viewer-image';
+    d.setAttribute('data-theme-page', String(i));
+    if (i % 2) {
+      var im = document.createElement('img');
+      im.src = u; im.width = 800; im.height = 1200;
+      d.appendChild(im);
+    } else {
+      d.style.backgroundImage = "url('" + u + "')";
+      d.style.width = '800px'; d.style.height = '1200px';
+    }
+    box.appendChild(d);
+  }
+}, 300);
+</script>
+</body></html>
