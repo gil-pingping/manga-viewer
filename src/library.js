@@ -72,6 +72,16 @@ export async function listChapters() {
   const rows = await run([CHAPTERS], 'readonly', (tx) =>
     reqToPromise(tx.objectStore(CHAPTERS).getAll())
   );
+
+  // 예전에 `{ url }` 만 저장한 기록이 남아 있다. 마이그레이션 대신 읽을 때 채운다
+  for (const row of rows) {
+    row.pages = (row.pages || []).map((p, i) => ({
+      ...p,
+      pageNumber: p.pageNumber ?? i + 1,
+      name: p.name || `Page ${i + 1}`,
+    }));
+  }
+
   return rows.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
 }
 
@@ -140,7 +150,19 @@ export async function saveChapter(chapter, { onProgress, signal } = {}) {
     id: chapter.id,
     title: chapter.title || '',
     label: chapter.label || '',
-    pages: pages.map((p) => ({ url: p.url })),
+    /**
+     * url 만 남기면 안 된다.
+     *
+     * 예전에 `{ url }` 로만 잘라 저장했더니 서재에서 복원한 챕터의 페이지 번호가
+     * 사라져 화면 구석에 `undefined` 딱지가 찍혔다. 온라인으로 열 때는 멀쩡하고
+     * **오프라인으로 열 때만** 보여서 원인을 찾기 어려웠다.
+     * 화면이 쓰는 필드는 같이 남긴다 (url 은 여전히 서재의 키다).
+     */
+    pages: pages.map((p, i) => ({
+      url: p.url,
+      pageNumber: p.pageNumber ?? i + 1,
+      name: p.name || `Page ${i + 1}`,
+    })),
     sourceUrl: chapter.sourceUrl || null,
     prevUrl: chapter.prevUrl || null,
     nextUrl: chapter.nextUrl || null,
