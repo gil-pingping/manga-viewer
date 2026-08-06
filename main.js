@@ -1262,7 +1262,8 @@ async function registerServiceWorker() {
   }
 
   try {
-    await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    reg.update().catch(() => {});
   } catch (err) {
     console.warn('[만화 뷰어] 서비스워커 등록 실패', err);
   }
