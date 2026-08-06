@@ -995,6 +995,44 @@ function applySettingsToUI() {
 }
 
 /**
+ * 주소에 붙어 온 토큰을 쿠키로 바꿔 넣고 주소에서 지운다.
+ *
+ * Cloudflare 에 올리면 이 주소는 인터넷에 공개된다. 인증이 없으면 누구나 쓰는
+ * 오픈 프록시가 되므로 토큰을 받는다. 처음 한 번 `?t=...` 가 붙은 주소로 열면
+ * 그 뒤로는 쿠키가 알아서 붙는다 — 홈 화면에 추가한 뒤엔 신경 쓸 일이 없다.
+ *
+ * 왜 쿠키인가: `<img src>` 는 헤더를 붙일 수 없다. 토큰을 이미지 주소에 넣으면
+ * **그 주소가 서재의 키**라서, 토큰을 바꾸는 순간 담아둔 화를 못 찾게 된다.
+ * 쿠키는 주소를 건드리지 않으므로 키가 그대로 유지된다.
+ */
+async function consumeAuthToken() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('t');
+  if (!token) return;
+
+  // 주소에서 즉시 지운다 (새로고침·공유로 토큰이 남아 돌지 않게)
+  params.delete('t');
+  const query = params.toString();
+  history.replaceState(
+    null,
+    '',
+    window.location.pathname + (query ? `?${query}` : '') + window.location.hash
+  );
+
+  try {
+    const res = await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    // 로컬 Node 서버에는 이 라우트가 없다(404) — 인증이 필요 없으니 조용히 넘어간다
+    if (res.status === 401) toast('토큰이 맞지 않습니다.', { error: true, duration: 8000 });
+  } catch {
+    /* 오프라인으로 열었으면 인증할 것도 없다 */
+  }
+}
+
+/**
  * 서비스워커를 등록해 앱 껍데기를 오프라인에서도 열리게 한다.
  *
  * secure context 전용이라 `http://<LAN IP>:5173` 에서는 등록 자체가 안 된다.
@@ -1045,6 +1083,9 @@ async function boot() {
   initEngine();
   applySettingsToUI();
   wireEvents();
+
+  // 인증이 제일 먼저다. 서재 복원이나 수집이 먼저 돌면 401 을 맞는다
+  await consumeAuthToken();
 
   // 브라우저가 공간이 부족할 때 서재를 조용히 비우지 않도록 미리 부탁한다
   library.requestPersistence().catch(() => {});

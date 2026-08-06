@@ -1,0 +1,25 @@
+{
+  // 앱 껍데기(dist)와 프록시(/api)를 한 오리진에서 낸다.
+  // 오리진이 하나여야 IndexedDB 서재가 갈리지 않고 서비스워커가 켜진다.
+  //
+  // name 은 이미 배포된 Worker 와 같아야 한다 — 그래야 새로 만들지 않고 교체된다.
+  "name": "manga-viewer",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-08-01",
+
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+
+    // 앱이 한 페이지라 없는 경로는 index.html 로 보낸다
+    "not_found_handling": "single-page-application",
+
+    // /api/* 만 Worker 를 태운다. 정적 요청까지 태우면 무료 티어
+    // 요청 수(10만/일)를 이미지 한 장마다 깎아먹는다
+    "run_worker_first": ["/api/*"]
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

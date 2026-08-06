@@ -10,14 +10,25 @@
  * 다른 오리진에서의 요청을 거부하므로, 브라우저가 직접 <img>로 못 불러온다.
  */
 
-const FETCH_TIMEOUT_MS = 20000;
+import {
+  assertFetchableUrl,
+  BROWSER_UA,
+  FETCH_TIMEOUT_MS,
+  imageRequestHeaders,
+  pageRequestHeaders,
+  upstreamFetch,
+} from './src/shared/proxyRules.js';
+
+/**
+ * 가드와 상류 요청은 Cloudflare Worker 와 **같은 파일을 공유한다**
+ * (src/shared/proxyRules.js). 가드가 두 곳으로 갈리면 그건 버그가 아니라
+ * 보안 구멍이 된다. 테스트(test/proxy-guard-check.mjs)가 이 경로로 가져간다.
+ */
+export { assertFetchableUrl };
+
 const IMPORT_TTL_MS = 5 * 60 * 1000;
 const MAX_PAGES = 2000;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-
-const BROWSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 ' +
-  '(KHTML, like Gecko) Version/17.0 Safari/605.1.15';
 
 /** 최근 import 페이로드 (단일 슬롯이면 충분하다) */
 let latestImport = null;
@@ -81,75 +92,8 @@ export function isLoopbackRequester(req) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
-export function assertFetchableUrl(rawUrl, allowPrivate) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error('올바른 URL이 아닙니다.');
-  }
-
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('http/https 주소만 가져올 수 있습니다.');
-  }
-
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-
-  const isBlockedHost =
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.internal') ||
-    host === '::1' ||
-    host === '0.0.0.0' ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    /^f[cd][0-9a-f]{2}:/.test(host) ||
-    /^fe80:/.test(host);
-
-  if (isBlockedHost && !allowPrivate) {
-    throw new Error(
-      '사설망 주소는 가져올 수 없습니다. ' +
-        '로컬 테스트 사이트라면 이 기기(localhost)에서 뷰어를 열고 시도하세요.'
-    );
-  }
-
-  return parsed;
-}
-
-/**
- * 상류 요청. 한 번은 다시 시도한다.
- *
- * 사이트가 순간적으로 거절하거나(연속 요청 시 흔하다) 타임아웃 한 번 났다고
- * 사용자에게 "실패"를 띄우면 앱이 고장난 것처럼 보인다. 실제로 네이버 웹툰에서
- * 같은 페이지를 반복 요청하다 502 를 한 번 맞았고, 곧바로 다시 하면 200 이었다.
- */
-async function upstreamFetch(url, headers) {
-  let lastErr = null;
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 700));
-    try {
-      const res = await fetch(url, {
-        headers,
-        redirect: 'follow',
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      // 5xx 는 재시도할 가치가 있다. 4xx 는 다시 해도 같은 답이 온다.
-      if (res.status >= 500 && attempt === 0) {
-        lastErr = new Error(`상류 ${res.status}`);
-        continue;
-      }
-      return res;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-
-  throw lastErr || new Error('상류 요청 실패');
-}
+/* assertFetchableUrl · upstreamFetch 는 src/shared/proxyRules.js 에 있다
+   (Cloudflare Worker 와 공유한다 — 위 import 주석 참고) */
 
 /* ==================================================================== */
 /* 헤드리스 브라우저 (JS 렌더 사이트용)                                   */
@@ -297,12 +241,10 @@ export default function mangaProxyPlugin() {
 
         try {
           const parsed = assertFetchableUrl(targetUrl, isLoopbackRequester(req));
-          const response = await upstreamFetch(parsed.href, {
-            'User-Agent': BROWSER_UA,
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.5',
-            Referer: parsed.origin + '/',
-          });
+          const response = await upstreamFetch(
+            parsed.href,
+            pageRequestHeaders(parsed.origin + '/')
+          );
 
           if (!response.ok) {
             sendJson(res, 502, {
@@ -450,11 +392,7 @@ export default function mangaProxyPlugin() {
             }
           }
 
-          const response = await upstreamFetch(parsed.href, {
-            'User-Agent': BROWSER_UA,
-            Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-            Referer: referer,
-          });
+          const response = await upstreamFetch(parsed.href, imageRequestHeaders(referer));
 
           if (!response.ok) {
             res.writeHead(response.status === 404 ? 404 : 502, {
