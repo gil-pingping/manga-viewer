@@ -1,4 +1,3 @@
-import { SAMPLE_MANGA_SERIES } from './src/sampleData.js';
 import { UrlHarvester } from './src/urlHarvester.js';
 import { ReaderEngine } from './src/readerEngine.js';
 import { buildBookmarklet } from './src/collector.js';
@@ -14,162 +13,26 @@ import {
 import * as library from './src/library.js';
 import { isNativeApp, resolvePageImageUrl } from './src/platform/nativeHttp.js';
 import { finishStartupAndApplyUpdate } from './src/platform/liveUpdate.js';
+import {
+  createInitialState,
+  saveSettings as persistSettings,
+  saveProgress as persistProgress,
+  readProgress,
+  CHROME_IDLE_MS,
+} from './src/state.js';
 
 /* ==================================================================== */
 /* 상태                                                                  */
 /* ==================================================================== */
 
-const PROGRESS_KEY = 'mangaViewer.progress';
-const SETTINGS_KEY = 'mangaViewer.settings';
-const CHROME_IDLE_MS = 3200;
+const state = createInitialState();
 
-const defaultSettings = {
-  mode: 'auto',
-  direction: 'RTL',
-  transition: 'slide',
-  speed: 5,
-  brightness: 100,
-  paper: 'none',
-};
-
-const state = {
-  /** 읽을 수 있는 챕터 목록. 불러온 챕터가 앞에 쌓인다 */
-  chapters: SAMPLE_MANGA_SERIES.episodes.map((ep) => ({
-    id: ep.id,
-    title: ep.title,
-    label: `${ep.number}화`,
-    pages: ep.pages,
-    sourceUrl: null,
-    prevUrl: null,
-    nextUrl: null,
-    isDemo: true, // 마지막 장에서 데모로 자동 진행하지 않도록 표시
-  })),
-  currentId: null,
-  settings: loadSettings(),
-  chromeVisible: true,
-  /** 서재에 저장된 챕터 메타 (id → record). 목록에 "담김" 표시를 하려고 들고 있다 */
-  saved: new Map(),
-  /** 지금 화면이 쓰고 있는 blob 주소들. 챕터를 바꿀 때 놓아줘야 메모리가 안 샌다 */
-  objectUrls: [],
-};
-
-let engine = null;
-let chromeTimer = null;
-let toastTimer = null;
-let nextChapterPrefetch = null;
-
-/* ==================================================================== */
-/* DOM                                                                   */
-/* ==================================================================== */
-
-const $ = (id) => document.getElementById(id);
-
-const el = {
-  viewport: $('manga-container'),
-  chrome: $('chrome'),
-  title: $('manga-title'),
-  chapter: $('chapter-badge'),
-  indicator: $('page-indicator'),
-  slider: $('page-slider'),
-  toast: $('toast'),
-  busy: $('busy'),
-  busyText: $('busy-text'),
-
-  tapLeft: $('tap-left'),
-  tapCenter: $('tap-center'),
-  tapRight: $('tap-right'),
-
-  btnEpList: $('btn-ep-list'),
-  btnImport: $('btn-import'),
-  btnFiles: $('btn-files'),
-  btnDisplay: $('btn-display'),
-  btnSettings: $('btn-settings'),
-
-  btnPrevEp: $('btn-prev-ep'),
-  btnNextEp: $('btn-next-ep'),
-  btnPrevPage: $('btn-prev-page'),
-  btnNextPage: $('btn-next-page'),
-  btnAutoplay: $('btn-autoplay'),
-  autoplayLabel: $('autoplay-label'),
-  btnZoomReset: $('btn-zoom-reset'),
-  btnFullscreen: $('btn-fullscreen'),
-
-  modalImport: $('modal-import'),
-  modalFiles: $('modal-files'),
-  modalEpisodes: $('modal-episodes'),
-  modalDisplay: $('modal-display'),
-  modalSettings: $('modal-settings'),
-
-  epList: $('episode-list'),
-  libUsage: $('lib-usage'),
-  btnSave1: $('btn-save-1'),
-  btnSave10: $('btn-save-10'),
-  rawInput: $('raw-input'),
-  btnSubmitUrl: $('btn-submit-url'),
-  bookmarkletUrl: $('bookmarklet-url'),
-  btnCopyBookmarklet: $('btn-copy-bookmarklet'),
-
-  dropZone: $('drop-zone'),
-  fileInput: $('file-input'),
-
-  modeGroup: $('mode-group'),
-  paperGroup: $('paper-group'),
-  dirGroup: $('dir-group'),
-  brightness: $('filter-brightness'),
-  brightnessOut: $('brightness-out'),
-  transition: $('setting-transition'),
-  speed: $('setting-speed'),
-};
-
-/* ==================================================================== */
-/* 저장소                                                                */
-/* ==================================================================== */
-
-function loadSettings() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    // mode 는 저장하지 않는다 (아래 saveSettings 주석 참고). 예전에 저장된 값도 무시한다.
-    delete saved.mode;
-    return { ...defaultSettings, ...saved };
-  } catch {
-    return { ...defaultSettings };
-  }
-}
-
-/**
- * 보기 모드(mode)는 저장하지 않는다.
- *
- * 저장했더니 함정이 됐다. 만화책 한 화를 보려고 "한 장"을 한 번 고르면
- * 그 뒤로 웹툰이 계속 페이지 넘김으로 떠서 "고장난 것"처럼 보였다.
- * auto 는 이미지 비율을 보고 옳게 고르니, 새 콘텐츠는 항상 auto 로 시작한다.
- * 수동 선택은 그 챕터를 보는 동안만 유효하다.
- */
 function saveSettings() {
-  try {
-    const { mode, ...persisted } = state.settings;
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(persisted));
-  } catch {
-    /* 사파리 프라이빗 모드 등에서는 저장을 포기한다 */
-  }
-}
-
-function readProgress() {
-  try {
-    return JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
-  } catch {
-    return {};
-  }
+  persistSettings(state.settings);
 }
 
 function saveProgress(chapterId, pageNumber) {
-  if (!chapterId) return;
-  try {
-    const all = readProgress();
-    all[chapterId] = pageNumber;
-    localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
-  } catch {
-    /* 무시 */
-  }
+  persistProgress(chapterId, pageNumber);
 }
 
 /* ==================================================================== */
