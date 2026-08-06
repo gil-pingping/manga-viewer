@@ -10,6 +10,7 @@
  */
 import assert from 'node:assert/strict';
 import { assertFetchableUrl, isLoopbackRequester } from '../vite-proxy-plugin.js';
+import { imageRequestHeaders } from '../src/shared/proxyRules.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -96,6 +97,19 @@ check('공개 주소는 어느 경로에서나 통과한다', () => {
     assert.doesNotThrow(() => assertFetchableUrl('https://comic.naver.com/webtoon/detail?no=1', allow));
     assert.doesNotThrow(() => assertFetchableUrl('https://i.pinimg.com/736x/a/b/c.jpg', allow));
   }
+});
+
+console.log('\n이미지 Referer');
+
+check('힌트가 없거나 깨지면 이미지 오리진을 쓴다', () => {
+  const fallback = 'https://cdn.example.test/';
+  assert.equal(imageRequestHeaders(null, fallback).Referer, fallback);
+  assert.equal(imageRequestHeaders('not a url', fallback).Referer, fallback);
+});
+
+check('올바른 원본 페이지 힌트를 우선한다', () => {
+  const page = 'https://comic.example.test/chapter/7';
+  assert.equal(imageRequestHeaders(page, 'https://cdn.example.test/').Referer, page);
 });
 
 console.log(`\n${passed}개 통과`);

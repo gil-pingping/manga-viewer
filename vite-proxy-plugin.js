@@ -383,16 +383,10 @@ export default function mangaProxyPlugin() {
           const parsed = assertFetchableUrl(targetUrl, isLoopbackRequester(req));
 
           // 이미지 CDN은 보통 "만화를 읽던 그 페이지"를 Referer 로 기대한다.
-          let referer = parsed.origin + '/';
-          if (refererHint) {
-            try {
-              referer = new URL(refererHint).href;
-            } catch {
-              /* 힌트가 깨졌으면 이미지 오리진을 그대로 쓴다 */
-            }
-          }
-
-          const response = await upstreamFetch(parsed.href, imageRequestHeaders(referer));
+          const response = await upstreamFetch(
+            parsed.href,
+            imageRequestHeaders(refererHint, parsed.origin + '/')
+          );
 
           if (!response.ok) {
             res.writeHead(response.status === 404 ? 404 : 502, {

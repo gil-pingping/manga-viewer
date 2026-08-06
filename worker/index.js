@@ -154,7 +154,7 @@ async function handleProxyImage(request) {
 
   let upstream;
   try {
-    upstream = await upstreamFetch(parsed.href, imageRequestHeaders(ref));
+    upstream = await upstreamFetch(parsed.href, imageRequestHeaders(ref, parsed.origin + '/'));
   } catch (err) {
     return textError(502, '이미지 중계 실패: ' + err.message);
   }

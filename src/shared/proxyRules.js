@@ -33,12 +33,21 @@ export const BROWSER_UA =
  * (`TypeError: Failed to fetch`). 오프라인 서재는 바이트를 저장해야 하므로
  * 프록시를 반드시 거쳐야 한다. 표시만 할 거면 프록시가 없어도 된다.
  */
-export function imageRequestHeaders(refererUrl) {
+export function imageRequestHeaders(refererUrl, fallbackUrl = null) {
   const headers = {
     'User-Agent': BROWSER_UA,
     Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
   };
-  if (refererUrl) headers.Referer = refererUrl;
+
+  let referer = fallbackUrl;
+  if (refererUrl) {
+    try {
+      referer = assertFetchableUrl(refererUrl, true).href;
+    } catch {
+      /* 힌트가 깨졌으면 호출자가 준 이미지 오리진을 쓴다 */
+    }
+  }
+  if (referer) headers.Referer = referer;
   return headers;
 }
 
