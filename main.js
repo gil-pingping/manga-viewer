@@ -18,6 +18,10 @@ import {
   saveSettings as persistSettings,
   saveProgress as persistProgress,
   readProgress,
+  saveLastChapterId,
+  readLastChapterId,
+  saveRecentChapters,
+  readRecentChapters,
   CHROME_IDLE_MS,
 } from './src/state.js';
 
@@ -148,6 +152,8 @@ async function openChapter(chapterId, pageNumber) {
   });
 
   state.currentId = chapter.id;
+  saveLastChapterId(chapter.id);
+  saveRecentChapters(state.chapters);
 
   el.title.textContent = chapter.title || '만화 뷰어';
   el.chapter.textContent = chapter.label || '';
@@ -161,9 +167,9 @@ async function openChapter(chapterId, pageNumber) {
   prefetchNextChapter(chapter);
 }
 
-/** 다음 화 HTML/컷 목록만 조용히 준비한다. WebView 대화창이 필요한 사이트면 클릭 때 처리. */
+/** 다음 화 HTML/컷 목록만 조용히 미리 수집하여 다음 화 전환 속도를 극대화한다. */
 function prefetchNextChapter(chapter) {
-  if (!isNativeApp() || !chapter?.nextUrl) {
+  if (!chapter?.nextUrl) {
     nextChapterPrefetch = null;
     return;
   }
@@ -173,6 +179,18 @@ function prefetchNextChapter(chapter) {
   ) return;
 
   const promise = UrlHarvester.fetchFromUrl(chapter.nextUrl, { silentRenderedFallback: true })
+    .then((harvested) => {
+      if (harvested && harvested.pages?.length > 0) {
+        const { chapters } = upsertChapter(
+          state.chapters,
+          harvested,
+          `prefetch-${Date.now()}`
+        );
+        state.chapters = chapters;
+        saveRecentChapters(state.chapters);
+      }
+      return harvested;
+    })
     .catch((err) => {
       console.debug('[다음 화 미리 받기] 클릭할 때 다시 시도합니다.', err.message);
       return null;
@@ -191,6 +209,7 @@ function addChapter(harvested, idPrefix) {
     `${idPrefix}-${Date.now()}`
   );
   state.chapters = chapters;
+  saveRecentChapters(chapters);
 
   // 새로 불러온 콘텐츠는 항상 auto 로 본다. 앞 챕터에서 고른 모드를 물려받으면
   // 웹툰이 페이지 넘김으로 뜨는 식으로 깨진다.
@@ -949,16 +968,10 @@ async function registerServiceWorker() {
   }
 }
 
-/**
- * 서재에 담아둔 화를 목록에 올린다.
- *
- * 데모 앞에 꽂아 최근에 담은 것이 위로 온다. 이것이 "회차를 전체 보는" 목록의
- * 실체다 — 새로고침해도 남고, 프록시가 죽어도 읽힌다.
- */
 async function loadLibraryIntoList() {
   await refreshSaved();
 
-  const restored = [...state.saved.values()].map((row) => ({
+  const restoredSaved = [...state.saved.values()].map((row) => ({
     id: row.id,
     title: row.title,
     label: row.label || '담아둔 화',
@@ -968,7 +981,12 @@ async function loadLibraryIntoList() {
     nextUrl: row.nextUrl,
   }));
 
-  if (restored.length > 0) state.chapters = [...restored, ...state.chapters];
+  const recentList = readRecentChapters();
+  for (const item of [...restoredSaved, ...recentList]) {
+    if (!item?.pages || item.pages.length === 0) continue;
+    const { chapters } = upsertChapter(state.chapters, item, item.id);
+    state.chapters = chapters;
+  }
 }
 
 async function boot() {
@@ -990,15 +1008,21 @@ async function boot() {
     if (/[#&]import=/.test(window.location.hash)) consumePendingImport();
   });
 
-  // 북마클릿으로 넘어온 게 있으면 그것을 열고, 없으면 서재의 최근 화를 연다.
-  // 데모를 자동으로 열면 빈 컷 프레임이 "고장난 뷰어"처럼 보인다 — 데모는 목록에서 고른다.
+  // 북마클릿으로 넘어온 게 있으면 그것을 열고, 없으면 마지막으로 읽던 화나 저장된 화를 연다.
   const imported = await consumePendingImport();
 
   if (!imported) {
-    // 담아둔 화가 있으면 그것으로 시작한다. 서버 없이 켰을 때 바로 읽히는 게 맞다
-    const recent = state.chapters.find((c) => state.saved.has(c.id));
-    if (recent) await openChapter(recent.id);
-    else showEmptyState();
+    const lastId = readLastChapterId();
+    const targetChapter =
+      state.chapters.find((c) => c.id === lastId) ||
+      state.chapters.find((c) => state.saved.has(c.id)) ||
+      state.chapters.find((c) => !c.isDemo);
+
+    if (targetChapter) {
+      await openChapter(targetChapter.id);
+    } else {
+      showEmptyState();
+    }
   }
 
   showChrome();

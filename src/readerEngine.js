@@ -20,9 +20,9 @@ import {
   isSpreadRatio,
 } from './core/layout.js';
 
-const MAX_CACHED_IMAGES = 28;
-const PRELOAD_AHEAD = 4;
-const PRELOAD_BEHIND = 2;
+const MAX_CACHED_IMAGES = 40;
+const PRELOAD_AHEAD = 8;
+const PRELOAD_BEHIND = 3;
 const MAX_ZOOM = 4;
 const SWIPE_THRESHOLD_PX = 55;
 

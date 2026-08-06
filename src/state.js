@@ -32,6 +32,8 @@ import { SAMPLE_MANGA_SERIES } from './sampleData.js';
 
 export const PROGRESS_KEY = 'mangaViewer.progress';
 export const SETTINGS_KEY = 'mangaViewer.settings';
+export const LAST_CHAPTER_KEY = 'mangaViewer.lastChapterId';
+export const RECENT_CHAPTERS_KEY = 'mangaViewer.recentChapters';
 export const CHROME_IDLE_MS = 3200;
 
 export const defaultSettings = {
@@ -76,6 +78,54 @@ export function saveProgress(chapterId, pageNumber) {
     const all = readProgress();
     all[chapterId] = pageNumber;
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {
+    /* 무시 */
+  }
+}
+
+export function readLastChapterId() {
+  try {
+    return localStorage.getItem(LAST_CHAPTER_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastChapterId(id) {
+  if (!id) return;
+  try {
+    localStorage.setItem(LAST_CHAPTER_KEY, id);
+  } catch {
+    /* 무시 */
+  }
+}
+
+export function readRecentChapters() {
+  try {
+    const raw = localStorage.getItem(RECENT_CHAPTERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRecentChapters(chapters) {
+  try {
+    // 최근 수집 및 열람한 챕터 최대 30개 보관 (데모 제외)
+    const filtered = (chapters || [])
+      .filter((c) => !c.isDemo)
+      .slice(0, 30)
+      .map((c) => ({
+        id: c.id,
+        title: c.title,
+        label: c.label,
+        pages: c.pages,
+        sourceUrl: c.sourceUrl || null,
+        prevUrl: c.prevUrl || null,
+        nextUrl: c.nextUrl || null,
+        savedAt: c.savedAt || Date.now(),
+      }));
+    localStorage.setItem(RECENT_CHAPTERS_KEY, JSON.stringify(filtered));
   } catch {
     /* 무시 */
   }
