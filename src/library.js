@@ -121,6 +121,11 @@ export async function saveChapter(chapter, { onProgress, signal } = {}) {
       bytes += have.blob.size;
     } else {
       const res = await fetch(key, { signal });
+      if (res.status === 401) {
+        // 공개 배포(Cloudflare)에서 쿠키가 없거나 만료된 경우. 상태 코드만 보여주면
+        // 원인을 알 수 없으니 무엇을 해야 하는지 적어준다
+        throw new Error('인증이 만료됐습니다. 토큰이 붙은 주소로 다시 한 번 열어주세요 (?t=...).');
+      }
       if (!res.ok) throw new Error(`${i + 1}번째 장을 받지 못했습니다 (${res.status})`);
       const blob = await res.blob();
       if (blob.size === 0) throw new Error(`${i + 1}번째 장이 비어 있습니다`);

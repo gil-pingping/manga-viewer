@@ -165,10 +165,19 @@ export class UrlHarvester {
       const reason = body && body.error ? body.error : `렌더링 실패 (${res.status})`;
 
       /**
-       * 헤드리스가 아예 없는 기기도 있다 — 태블릿(Termux)에는 Chrome 을 못 깐다.
-       * "Chrome 을 설치하세요"는 그 기기에서 할 수 없는 일이라 안내가 아니다.
-       * 그 자리에서 실제로 되는 길(북마클릿)을 알려준다.
+       * 헤드리스가 아예 없는 환경이 둘 있다 — Cloudflare Worker 에는 브라우저가 없고,
+       * 태블릿(Termux)에는 Chrome 을 못 깐다. "Chrome 을 설치하세요"는 그 환경에서
+       * 할 수 없는 일이라 안내가 아니다. 그 자리에서 되는 길(북마클릿)을 알려준다.
+       *
+       * Worker 는 needsBookmarklet 을 명시해 준다. Node 서버는 문구로 판별한다.
        */
+      if (body && body.needsBookmarklet) {
+        // 서버가 이미 할 수 있는 일을 적어 보냈다. 그 문구를 그대로 쓴다
+        const err = new Error(reason);
+        err.needsBookmarklet = true;
+        throw err;
+      }
+
       if (/브라우저를 띄우지 못했습니다/.test(reason)) {
         const err = new Error(
           '이 사이트는 이미지를 나중에 불러오는데, 이 기기에서는 서버가 대신 열어볼 수 없습니다.\n' +
