@@ -135,6 +135,11 @@ export class UrlHarvester {
     const descriptors = collectDescriptors(doc);
     const imageUrls = selectContentImages(descriptors, targetUrl);
 
+    // 정적 HTML 에 광고·placeholder 1~2장만 있고 실제 컷은 렌더 뒤 생기는 사이트가 있다.
+    if (isNativeApp() && imageUrls.length < 3) {
+      return UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
+    }
+
     if (imageUrls.length === 0) {
       // 원인이 둘 다 가능하다: 그 화가 없거나 / 이미지를 JS 로 나중에 채우거나.
       // 어느 필터가 걸렀는지 진단을 실어 보낸다 — 개발자도구 없이 원인을 보게
