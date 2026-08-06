@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import JSZip from 'jszip';
+import { NATIVE_VERSION } from '../src/core/otaManifest.js';
 
 const DIST = resolve('dist');
 const OUTPUT = join(DIST, 'ota');
@@ -75,7 +76,7 @@ await writeFile(
       url: `${ORIGIN}/ota/${zipName}`,
       checksum,
       signature,
-      nativeVersion: 1,
+      nativeVersion: NATIVE_VERSION,
       createdAt: new Date().toISOString(),
     },
     null,

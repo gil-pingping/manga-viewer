@@ -3,6 +3,9 @@ import mangaProxyPlugin from './vite-proxy-plugin.js';
 
 export default defineConfig({
   plugins: [mangaProxyPlugin()],
+  // 수집 규칙은 함수 소스를 외부 WebView에 주입한다. 이름을 축약하면 주입된 코드의
+  // 함수 참조가 끊긴다. 앱 전체가 300KB 미만이라 압축보다 동작 보존이 중요하다.
+  build: { minify: false },
   server: {
     // 맥에서 고치는 동안 태블릿으로 확인할 수 있게 LAN 바인딩
     host: true,

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { OTA_ORIGIN, validateOtaManifest } from '../src/core/otaManifest.js';
+import { NATIVE_VERSION, OTA_ORIGIN, validateOtaManifest } from '../src/core/otaManifest.js';
 
 const bundleId = 'web-0123456789abcdefabcd';
 const valid = {
   schemaVersion: 1,
-  nativeVersion: 1,
+  nativeVersion: NATIVE_VERSION,
   bundleId,
   checksum: 'a'.repeat(64),
   signature: 'YWJjZA==',
@@ -22,6 +22,9 @@ assert.throws(
   /허용되지 않은/
 );
 assert.throws(() => validateOtaManifest({ ...valid, signature: '' }), /signature/);
-assert.throws(() => validateOtaManifest({ ...valid, nativeVersion: 2 }), /호환되지 않는/);
+assert.throws(
+  () => validateOtaManifest({ ...valid, nativeVersion: NATIVE_VERSION + 1 }),
+  /호환되지 않는/
+);
 
 console.log('OTA manifest 4개 통과');
