@@ -13,6 +13,7 @@ import {
 import * as library from './src/library.js';
 import { isNativeApp, resolvePageImageUrl } from './src/platform/nativeHttp.js';
 import { finishStartupAndApplyUpdate, getCurrentBundleId } from './src/platform/liveUpdate.js';
+import { APP_VERSION, BUILD_TIME } from './src/version.js';
 import {
   createInitialState,
   saveSettings as persistSettings,
@@ -1030,10 +1031,6 @@ function wireEvents() {
   /* 빈 상태에서 바로 시작 */
   document.getElementById('empty-files').addEventListener('click', () => openModal(el.modalFiles));
   document.getElementById('empty-import').addEventListener('click', () => openModal(el.modalImport));
-  document.getElementById('empty-demo').addEventListener('click', () => {
-    openChapter(state.chapters[0].id, 1);
-    toast('데모 페이지입니다. 실제 만화는 위 버튼으로 불러오세요.', { duration: 4000 });
-  });
 
   /* 서재에 담기 */
   el.btnSave1.addEventListener('click', () => batchSave(1));
@@ -1348,14 +1345,20 @@ async function boot() {
 
   showChrome();
 
-  // 현재 OTA 번들 버전 표시
-  try {
-    const bundleId = await getCurrentBundleId();
-    const tagText = bundleId ? bundleId.replace(/^web-/, '') : 'dev';
+  const updateVersionTags = (bundleId = '') => {
+    const otaText = bundleId ? ` [${bundleId.replace(/^web-/, '').slice(0, 8)}]` : '';
+    const label = `${APP_VERSION}${otaText}`;
     ['ota-tag', 'ep-modal-ota-tag', 'empty-ota-tag'].forEach((id) => {
       const tagEl = document.getElementById(id);
-      if (tagEl) tagEl.textContent = `v-${tagText}`;
+      if (tagEl) tagEl.textContent = label;
     });
+  };
+
+  updateVersionTags();
+
+  try {
+    const bundleId = await getCurrentBundleId();
+    updateVersionTags(bundleId);
   } catch {
     /* 무시 */
   }

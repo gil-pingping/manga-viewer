@@ -150,16 +150,7 @@ export function saveRecentChapters(chapters) {
 export function createInitialState() {
   return {
     /** @type {Chapter[]} */
-    chapters: SAMPLE_MANGA_SERIES.episodes.map((ep) => ({
-      id: ep.id,
-      title: ep.title,
-      label: `${ep.number}화`,
-      pages: ep.pages,
-      sourceUrl: null,
-      prevUrl: null,
-      nextUrl: null,
-      isDemo: true,
-    })),
+    chapters: [],
     currentId: null,
     settings: loadSettings(),
     chromeVisible: true,
