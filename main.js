@@ -40,6 +40,72 @@ function saveProgress(chapterId, pageNumber) {
 }
 
 /* ==================================================================== */
+/* DOM                                                                   */
+/* ==================================================================== */
+
+const $ = (id) => document.getElementById(id);
+
+const el = {
+  viewport: $('manga-container'),
+  chrome: $('chrome'),
+  title: $('manga-title'),
+  chapter: $('chapter-badge'),
+  indicator: $('page-indicator'),
+  slider: $('page-slider'),
+  sliderPreview: $('slider-preview'),
+  sliderPreviewImg: $('slider-preview-img'),
+  sliderPreviewNum: $('slider-preview-num'),
+  toast: $('toast'),
+  busy: $('busy'),
+  busyText: $('busy-text'),
+
+  tapLeft: $('tap-left'),
+  tapCenter: $('tap-center'),
+  tapRight: $('tap-right'),
+
+  btnEpList: $('btn-ep-list'),
+  btnImport: $('btn-import'),
+  btnFiles: $('btn-files'),
+  btnDisplay: $('btn-display'),
+  btnSettings: $('btn-settings'),
+
+  btnPrevEp: $('btn-prev-ep'),
+  btnNextEp: $('btn-next-ep'),
+  btnPrevPage: $('btn-prev-page'),
+  btnNextPage: $('btn-next-page'),
+  btnAutoplay: $('btn-autoplay'),
+  autoplayLabel: $('autoplay-label'),
+  btnZoomReset: $('btn-zoom-reset'),
+  btnFullscreen: $('btn-fullscreen'),
+
+  modalImport: $('modal-import'),
+  modalFiles: $('modal-files'),
+  modalEpisodes: $('modal-episodes'),
+  modalDisplay: $('modal-display'),
+  modalSettings: $('modal-settings'),
+
+  epList: $('episode-list'),
+  libUsage: $('lib-usage'),
+  btnSave1: $('btn-save-1'),
+  btnSave10: $('btn-save-10'),
+  rawInput: $('raw-input'),
+  btnSubmitUrl: $('btn-submit-url'),
+  bookmarkletUrl: $('bookmarklet-url'),
+  btnCopyBookmarklet: $('btn-copy-bookmarklet'),
+
+  dropZone: $('drop-zone'),
+  fileInput: $('file-input'),
+
+  modeGroup: $('mode-group'),
+  paperGroup: $('paper-group'),
+  dirGroup: $('dir-group'),
+  brightness: $('filter-brightness'),
+  brightnessOut: $('brightness-out'),
+  transition: $('setting-transition'),
+  speed: $('setting-speed'),
+};
+
+/* ==================================================================== */
 /* 알림 · 로딩                                                           */
 /* ==================================================================== */
 
@@ -188,6 +254,19 @@ function prefetchNextChapter(chapter) {
         );
         state.chapters = chapters;
         saveRecentChapters(state.chapters);
+
+        // 2화 연속 사전 수집: 다음 화의 다음 화도 백그라운드로 수집
+        if (harvested.nextUrl) {
+          UrlHarvester.fetchFromUrl(harvested.nextUrl, { silentRenderedFallback: true })
+            .then((h2) => {
+              if (h2 && h2.pages?.length > 0) {
+                const res = upsertChapter(state.chapters, h2, `prefetch2-${Date.now()}`);
+                state.chapters = res.chapters;
+                saveRecentChapters(state.chapters);
+              }
+            })
+            .catch(() => {});
+        }
       }
       return harvested;
     })
@@ -374,13 +453,10 @@ function initEngine() {
 
     onEpisodeEnd: () => {
       const next = state.chapters[currentIndex() + 1];
-
-      // 데모로 자동 진행하면 "왜 갑자기 빈 컷이 나오지"가 된다. 불러온 것만 이어본다.
-      const canAutoAdvance = (next && !next.isDemo) || currentChapter().nextUrl;
+      const canAutoAdvance = (next && !next.isDemo) || currentChapter()?.nextUrl;
 
       if (canAutoAdvance) {
-        toast('마지막 페이지입니다. 다음 화로 넘어갑니다.');
-        setTimeout(() => goChapter(1), 900);
+        showAutoNextCard();
       } else {
         toast('마지막 페이지입니다.');
       }
@@ -693,15 +769,77 @@ async function consumePendingImport() {
 /* 이벤트                                                                */
 /* ==================================================================== */
 
+function showTouchPulse(e) {
+  if (!e || !e.clientX) return;
+  const pulse = document.createElement('div');
+  pulse.className = 'touch-pulse';
+  pulse.style.left = `${e.clientX}px`;
+  pulse.style.top = `${e.clientY}px`;
+  document.body.appendChild(pulse);
+  setTimeout(() => pulse.remove(), 400);
+}
+
+let autoNextTimer = null;
+
+function showAutoNextCard() {
+  if (!canGoAdjacent(1)) return;
+  const existing = document.querySelector('.auto-next-card');
+  if (existing) return;
+
+  const nextCh = findRealNeighbor(state.chapters, state.currentId, 1);
+  const nextLabel = nextCh ? nextCh.label : '다음 화';
+
+  const card = document.createElement('div');
+  card.className = 'auto-next-card';
+
+  let countdown = 3;
+  card.innerHTML = `
+    <div class="card-text"><b>${nextLabel}</b>로 이동합니다 (<span id="auto-next-sec">${countdown}</span>초)</div>
+    <div class="card-btns">
+      <button type="button" class="btn-card btn-confirm" id="btn-auto-now">지금 이동</button>
+      <button type="button" class="btn-card btn-cancel" id="btn-auto-cancel">취소</button>
+    </div>
+  `;
+  document.body.appendChild(card);
+
+  const secSpan = card.querySelector('#auto-next-sec');
+
+  autoNextTimer = setInterval(() => {
+    countdown--;
+    if (secSpan) secSpan.textContent = String(countdown);
+    if (countdown <= 0) {
+      clearInterval(autoNextTimer);
+      card.remove();
+      goChapter(1);
+    }
+  }, 1000);
+
+  card.querySelector('#btn-auto-now').addEventListener('click', () => {
+    clearInterval(autoNextTimer);
+    card.remove();
+    goChapter(1);
+  });
+
+  card.querySelector('#btn-auto-cancel').addEventListener('click', () => {
+    clearInterval(autoNextTimer);
+    card.remove();
+  });
+}
+
 function wireEvents() {
   /* 터치 영역 — 읽기 방향에 따라 좌우 의미가 뒤바뀐다 */
-  el.tapLeft.addEventListener('click', () => {
+  el.tapLeft.addEventListener('click', (e) => {
+    showTouchPulse(e);
     state.settings.direction === 'RTL' ? engine.nextPage() : engine.prevPage();
   });
-  el.tapRight.addEventListener('click', () => {
+  el.tapRight.addEventListener('click', (e) => {
+    showTouchPulse(e);
     state.settings.direction === 'RTL' ? engine.prevPage() : engine.nextPage();
   });
-  el.tapCenter.addEventListener('click', toggleChrome);
+  el.tapCenter.addEventListener('click', (e) => {
+    showTouchPulse(e);
+    toggleChrome();
+  });
 
   /* 페이지 · 화 이동 */
   el.btnPrevPage.addEventListener('click', () => engine.prevPage());
@@ -709,11 +847,34 @@ function wireEvents() {
   el.btnPrevEp.addEventListener('click', () => goChapter(-1));
   el.btnNextEp.addEventListener('click', () => goChapter(1));
 
+  /* 슬라이더 미리보기 툴팁 */
+  const updateSliderPreview = (val) => {
+    const pageNum = parseInt(val, 10);
+    if (!engine || !engine.pages || pageNum < 1 || pageNum > engine.pages.length) return;
+    const page = engine.pages[pageNum - 1];
+    if (page && page.url && el.sliderPreviewImg) {
+      el.sliderPreviewImg.src = resolvePageImageUrl(page);
+      el.sliderPreviewNum.textContent = `${pageNum}p`;
+      el.sliderPreview.classList.add('show');
+    }
+  };
+
   el.slider.addEventListener('input', (e) => {
+    updateSliderPreview(e.target.value);
     engine.goToPage(parseInt(e.target.value, 10));
     showChrome(false);
   });
-  el.slider.addEventListener('change', () => showChrome());
+
+  ['pointerdown', 'touchstart'].forEach((evt) => {
+    el.slider.addEventListener(evt, () => updateSliderPreview(el.slider.value));
+  });
+
+  ['pointerup', 'touchend', 'change'].forEach((evt) => {
+    el.slider.addEventListener(evt, () => {
+      el.sliderPreview.classList.remove('show');
+      showChrome();
+    });
+  });
 
   el.btnAutoplay.addEventListener('click', () => {
     const playing = engine.toggleAutoPlay();
@@ -847,7 +1008,7 @@ function wireEvents() {
     engine.setAutoPlaySpeed(seconds);
   });
 
-  /* 키보드 */
+  /* 키보드 및 태블릿 물리 볼륨버튼 */
   window.addEventListener('keydown', (e) => {
     if (e.target.matches('input, textarea, select')) return;
 
@@ -859,15 +1020,28 @@ function wireEvents() {
 
     const rtl = state.settings.direction === 'RTL';
 
-    if (e.key === 'ArrowLeft') rtl ? engine.nextPage() : engine.prevPage();
-    else if (e.key === 'ArrowRight') rtl ? engine.prevPage() : engine.nextPage();
-    else if (e.key === 'ArrowDown' || e.key === ' ') {
+    if (e.key === 'VolumeDown' || e.key === 'PageDown') {
       e.preventDefault();
       engine.nextPage();
-    } else if (e.key === 'ArrowUp') engine.prevPage();
-    else if (e.key.toLowerCase() === 'f') el.btnFullscreen.click();
-    else if (e.key.toLowerCase() === 'm') toggleChrome();
-    else return;
+    } else if (e.key === 'VolumeUp' || e.key === 'PageUp') {
+      e.preventDefault();
+      engine.prevPage();
+    } else if (e.key === 'ArrowLeft') {
+      rtl ? engine.nextPage() : engine.prevPage();
+    } else if (e.key === 'ArrowRight') {
+      rtl ? engine.prevPage() : engine.nextPage();
+    } else if (e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault();
+      engine.nextPage();
+    } else if (e.key === 'ArrowUp') {
+      engine.prevPage();
+    } else if (e.key.toLowerCase() === 'f') {
+      el.btnFullscreen.click();
+    } else if (e.key.toLowerCase() === 'm') {
+      toggleChrome();
+    } else {
+      return;
+    }
 
     showChrome();
   });

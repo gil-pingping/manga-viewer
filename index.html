@@ -95,7 +95,11 @@
       </header>
 
       <footer class="bottombar">
-        <div class="scrub">
+        <div class="scrub" style="position: relative;">
+          <div class="slider-preview-tooltip" id="slider-preview">
+            <img class="slider-preview-img" id="slider-preview-img" src="" alt="preview">
+            <span class="slider-preview-num" id="slider-preview-num">1p</span>
+          </div>
           <span class="page-counter" id="page-indicator">– / –</span>
           <input type="range" id="page-slider" class="slider" min="1" max="1" value="1" aria-label="페이지 이동">
         </div>
@@ -267,6 +271,7 @@
             <label class="label">색 보정</label>
             <div class="segmented" id="paper-group" role="group">
               <button type="button" data-paper="none" class="is-active">기본</button>
+              <button type="button" data-paper="amoled">리얼블랙</button>
               <button type="button" data-paper="sepia">세피아</button>
               <button type="button" data-paper="contrast">고대비</button>
               <button type="button" data-paper="night">야간</button>
