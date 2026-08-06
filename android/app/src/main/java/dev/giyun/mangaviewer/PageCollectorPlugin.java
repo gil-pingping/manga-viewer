@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -31,6 +32,7 @@ import org.json.JSONTokener;
 @CapacitorPlugin(name = "PageCollector")
 public class PageCollectorPlugin extends Plugin {
 
+    private static final String TAG = "PageCollector";
     private static final int MAX_SCROLL_TICKS = 30;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Dialog dialog;
@@ -210,6 +212,12 @@ public class PageCollectorPlugin extends Plugin {
                     Object decoded = new JSONTokener(value).nextValue();
                     if (!(decoded instanceof String)) throw new IllegalStateException("수집 결과가 문자열이 아닙니다.");
                     JSObject result = new JSObject((String) decoded);
+                    String collectorError = result.optString("collectorError", "");
+                    if (!collectorError.isEmpty()) {
+                        Log.e(TAG, collectorError);
+                        setStatus("수집 실패 · " + shortMessage(collectorError));
+                        return;
+                    }
                     JSONArray pages = result.optJSONArray("pages");
                     if (pages == null || pages.length() == 0) {
                         setStatus("이미지 없음 · 로그인 후 ‘가져오기’를 누르세요");
@@ -217,6 +225,7 @@ public class PageCollectorPlugin extends Plugin {
                     }
                     finishSuccess(result);
                 } catch (Exception err) {
+                    Log.e(TAG, "수집 결과를 읽지 못했습니다.", err);
                     setStatus("수집 실패 · 페이지를 확인하고 다시 누르세요");
                 }
             }
@@ -229,6 +238,11 @@ public class PageCollectorPlugin extends Plugin {
 
     private void setStatus(String text) {
         if (statusView != null) statusView.setText(text);
+    }
+
+    private String shortMessage(String message) {
+        String firstLine = message.split("\\R", 2)[0];
+        return firstLine.length() > 90 ? firstLine.substring(0, 90) : firstLine;
     }
 
     private void finishSuccess(JSObject result) {

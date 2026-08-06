@@ -49,6 +49,15 @@ check('Android WebView 수집기도 자기완결적 JS 다', () => {
   assert.doesNotMatch(script, /\bexport\s+/);
 });
 
+check('Android WebView 수집 오류가 진단값으로 돌아온다', () => {
+  const script = buildNativeCollectorScript();
+  const result = new Function('document', 'location', `return ${script}`)(
+    {},
+    { href: 'https://reader.test/chapter/1' }
+  );
+  assert.match(JSON.parse(result).collectorError, /querySelectorAll/);
+});
+
 check('export 키워드가 남아있지 않다', () => {
   // 함수 소스를 그대로 쓰면 "export function ..." 이 되어 문법 오류가 난다
   assert.equal(/\bexport\s+(function|const|var|let)\b/.test(decoded), false);

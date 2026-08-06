@@ -69,8 +69,16 @@ function runCollector(viewerOrigin) {
       var a = anchors[i];
       var text = (a.textContent || '').trim();
       if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
-      if (a.href.split('#')[0] === here) continue;
-      return a.href;
+      var raw = a.getAttribute('href');
+      if (!raw) continue;
+      var href;
+      try {
+        href = new URL(raw, location.href).href;
+      } catch (e) {
+        continue;
+      }
+      if (href.split('#')[0] === here) continue;
+      return href;
     }
     return null;
   }
@@ -162,8 +170,16 @@ function collectForNative() {
       var a = anchors[i];
       var text = (a.textContent || '').trim();
       if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
-      if (a.href.split('#')[0] === here) continue;
-      return a.href;
+      var raw = a.getAttribute('href');
+      if (!raw) continue;
+      var href;
+      try {
+        href = new URL(raw, location.href).href;
+      } catch (e) {
+        continue;
+      }
+      if (href.split('#')[0] === here) continue;
+      return href;
     }
     return null;
   }
@@ -197,7 +213,7 @@ export function buildBookmarklet(viewerOrigin) {
 export function buildNativeCollectorScript() {
   const fns = BUNDLED.map((fn) => fn.toString().replace(/^export\s+/, '')).join('\n');
   const body = `${bundledConstants()}\n${fns}\nreturn (${collectForNative.toString()})();`;
-  return `(function(){${body}})();`;
+  return `(function(){try{${body}}catch(e){return JSON.stringify({collectorError:String(e&&e.stack||e)})}})();`;
 }
 
 export { runCollector, collectForNative, BUNDLED, bundledConstants };
