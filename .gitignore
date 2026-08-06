@@ -26,3 +26,9 @@ dist-ssr
 # 도구 상태 (커밋 대상 아님)
 .claude-flow
 .playwright-mcp
+
+# Cloudflare
+# .dev.vars 는 로컬 시크릿(MV_TOKEN)이다. 커밋되면 프록시 토큰이 이력에 영구히 남는다.
+.dev.vars
+.dev.vars.*
+.wrangler
