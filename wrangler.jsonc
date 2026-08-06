@@ -16,7 +16,7 @@
 
     // /api/* 만 Worker 를 태운다. 정적 요청까지 태우면 무료 티어
     // 요청 수(10만/일)를 이미지 한 장마다 깎아먹는다
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/ota/latest.json"]
   },
 
   "observability": {

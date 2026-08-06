@@ -1,0 +1,20 @@
+{
+  "appId": "dev.giyun.mangaviewer",
+  "appName": "만화 뷰어",
+  "webDir": "dist",
+  "loggingBehavior": "production",
+  "backgroundColor": "#0b0c0e",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "LiveUpdate": {
+      "autoBlockRolledBackBundles": true,
+      "autoDeleteBundles": true,
+      "autoUpdateStrategy": "none",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7Y49FBuE35NZL8xEzoQ\nHBEtI/BkGrbLZkhec2BDm+cxjHgCS8jRiDJsohEROUonGSSHb863gpLnqdaY+oal\nue/V4jfQlA1SzL/pL/2/qm9SnjTjQWyjppkqSu1PssraHvJAR7I3yyjnGUaS5QWw\niSL0fFVTPUocg3XW/11LHCs0tnoLsRkw0CeUCQIkEtk1txxPRMPye/SINCT645NG\ny0iBgA6KQxCU1gbo/OLg6ZB1YOfOYDwCrwIxPTCrsVynGBlNTMWE5pKh33OEW6mI\nhK7/hT+h64vGFlJQ5t8gHP7qUENmu+rAV9ykahFDg9K/5RiDAfMuI45vp+sjJBmg\nwwIDAQAB\n-----END PUBLIC KEY-----\n",
+      "readyTimeout": 10000
+    }
+  }
+}

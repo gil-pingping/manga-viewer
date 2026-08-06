@@ -240,6 +240,16 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
 
+    if (path === '/ota/latest.json') {
+      const response = await env.ASSETS.fetch(request);
+      if (!response.ok) return response;
+      const headers = new Headers(response.headers);
+      headers.set('Cache-Control', 'no-store');
+      headers.set('Access-Control-Allow-Origin', '*');
+      headers.set('X-Content-Type-Options', 'nosniff');
+      return new Response(response.body, { status: response.status, headers });
+    }
+
     if (!path.startsWith('/api/')) {
       // run_worker_first 설정상 여기까지 오는 일은 드물다. 방어적으로 넘긴다
       return env.ASSETS.fetch(request);

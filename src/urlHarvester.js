@@ -6,6 +6,8 @@ import {
   JUNK_PATTERN,
 } from './core/imageRules.js';
 import { collectDescriptors, looksJsRendered } from './collect/fromDocument.js';
+import { fetchPageDocument, isNativeApp } from './platform/nativeHttp.js';
+import { collectRenderedPage } from './platform/pageCollector.js';
 
 /**
  * 만화 이미지 수집기
@@ -84,9 +86,19 @@ export class UrlHarvester {
    */
   static async fetchFromUrl(targetUrl) {
     const parsedUrl = new URL(targetUrl);
-    const res = await fetch(`/api/fetch-page?url=${encodeURIComponent(targetUrl)}`);
+    let res;
+    try {
+      res = await fetchPageDocument(targetUrl);
+    } catch (err) {
+      if (isNativeApp()) return UrlHarvester.renderFromUrl(targetUrl);
+      throw err;
+    }
 
     if (!res.ok) {
+      // 데이터센터 차단·로그인 요구면 서버 흉내를 더 내지 않는다. 실제 WebView로 연다.
+      if (isNativeApp() && [401, 403, 429].includes(res.status)) {
+        return UrlHarvester.renderFromUrl(targetUrl);
+      }
       let detail = `${res.status}`;
       try {
         const body = await res.json();
@@ -152,17 +164,22 @@ export class UrlHarvester {
    * 페이지는 여전히 북마클릿(사용자 브라우저)만 가능하다.
    */
   static async renderFromUrl(targetUrl) {
-    const res = await fetch(`/api/render-page?url=${encodeURIComponent(targetUrl)}`);
-
     let body = null;
-    try {
-      body = await res.json();
-    } catch {
-      throw new Error('헤드리스 렌더링 응답을 읽지 못했습니다.');
+    let res = null;
+
+    if (isNativeApp()) {
+      body = { ok: true, ...(await collectRenderedPage(targetUrl)) };
+    } else {
+      res = await fetch(`/api/render-page?url=${encodeURIComponent(targetUrl)}`);
+      try {
+        body = await res.json();
+      } catch {
+        throw new Error('헤드리스 렌더링 응답을 읽지 못했습니다.');
+      }
     }
 
-    if (!res.ok || !body.ok) {
-      const reason = body && body.error ? body.error : `렌더링 실패 (${res.status})`;
+    if (!body.ok || (res && !res.ok)) {
+      const reason = body && body.error ? body.error : `렌더링 실패 (${res?.status || 500})`;
 
       /**
        * 헤드리스가 아예 없는 환경이 둘 있다 — Cloudflare Worker 에는 브라우저가 없고,
@@ -199,12 +216,13 @@ export class UrlHarvester {
       throw err;
     }
 
+    const sourceUrl = body.sourceUrl || targetUrl;
     return {
       title: body.title || '불러온 만화',
-      targetUrl,
-      prevUrl: body.prevUrl || bumpEpisodeParam(targetUrl, -1),
-      nextUrl: body.nextUrl || bumpEpisodeParam(targetUrl, +1),
-      pages: toPages(body.pages, targetUrl),
+      targetUrl: sourceUrl,
+      prevUrl: body.prevUrl || bumpEpisodeParam(sourceUrl, -1),
+      nextUrl: body.nextUrl || bumpEpisodeParam(sourceUrl, +1),
+      pages: toPages(body.pages, sourceUrl),
     };
   }
 
@@ -294,6 +312,7 @@ function toPages(urls, refererUrl) {
     pageNumber: i + 1,
     url: proxiedUrl(imgUrl, refererUrl),
     originalUrl: imgUrl,
+    refererUrl,
     name: `Page ${i + 1}`,
   }));
 }

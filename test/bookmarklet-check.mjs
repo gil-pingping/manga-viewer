@@ -9,7 +9,12 @@
  * 아무도 안 알려줬고, 같은 사이트가 경로에 따라 다르게 동작했다.
  */
 import assert from 'node:assert/strict';
-import { buildBookmarklet, BUNDLED, bundledConstants } from '../src/collector.js';
+import {
+  buildBookmarklet,
+  buildNativeCollectorScript,
+  BUNDLED,
+  bundledConstants,
+} from '../src/collector.js';
 import { selectContentImages } from '../src/core/imageRules.js';
 import { ALL_FIXTURES } from './fixtures/site-samples.mjs';
 
@@ -36,6 +41,12 @@ check('뷰어 주소가 박혀 있다', () => {
 
 check('조립 결과가 유효한 JS 다', () => {
   assert.doesNotThrow(() => new Function(decoded));
+});
+
+check('Android WebView 수집기도 자기완결적 JS 다', () => {
+  const script = buildNativeCollectorScript();
+  assert.doesNotThrow(() => new Function(script));
+  assert.doesNotMatch(script, /\bexport\s+/);
 });
 
 check('export 키워드가 남아있지 않다', () => {

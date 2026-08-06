@@ -8,8 +8,11 @@ IndexedDB 서재가 갈리지 않고 서비스워커가 켜진다.
 ## 배포
 
 ```sh
-npm test && npm run deploy     # vite build + wrangler deploy
+npm test && npm run deploy     # 웹 + 서명된 Android OTA + Worker
 ```
+
+Android APK도 쓰는 배포자는 첫 한 번 `npm run ota:key`로 서명키를 만든다. 자세한 설치와
+키 백업은 `ANDROID.md`.
 
 되돌리기: `npx wrangler rollback`
 
@@ -78,7 +81,10 @@ Cloudflare 대시보드에서 이 앱을 Access 뒤에 두고 허용할 이메�
 - **JS 로 이미지를 채우는 사이트**는 Worker 가 대신 열어볼 수 없다(브라우저가 없다).
   그런 사이트는 불러오기 창의 **북마클릿**을 쓴다.
 - **로그인이 필요한 페이지**도 서버가 대신 못 연다. 북마클릿만 가능하다.
+- 위 두 제한은 **웹 배포판** 기준이다. Android APK는 앱 안 WebView로 페이지를 열고
+  로그인·렌더링한 DOM을 수집한다. 만화 트래픽도 태블릿에서 직접 나가므로 Cloudflare
+  데이터센터 IP 403을 피한다.
 - **로컬만 되고 배포에서 이미지 서버 403이 나면** `ref` 없는 붙여넣기 경로를 먼저 본다.
   Node와 Worker 모두 원본 페이지 `ref`가 없을 때 이미지 오리진을 Referer로 쓴다.
   이 규칙은 `src/shared/proxyRules.js` 한 곳에서 관리한다.
-- 맥 없이 태블릿에서만 돌리는 대안은 `TABLET.md` (Termux). 둘은 공존한다.
+- 권장 태블릿 경로는 `ANDROID.md` (APK). `TABLET.md`의 Termux 방식도 공존한다.

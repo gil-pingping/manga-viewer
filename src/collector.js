@@ -153,6 +153,31 @@ function runCollector(viewerOrigin) {
   });
 }
 
+/** Android 보조 WebView가 현재 DOM을 읽고 네이티브 쪽으로 돌려줄 값. */
+function collectForNative() {
+  function findLink(re) {
+    var here = location.href.split('#')[0];
+    var anchors = document.querySelectorAll('a[href]');
+    for (var i = 0; i < anchors.length; i++) {
+      var a = anchors[i];
+      var text = (a.textContent || '').trim();
+      if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
+      if (a.href.split('#')[0] === here) continue;
+      return a.href;
+    }
+    return null;
+  }
+
+  var pages = selectContentImages(collectDescriptors(document), location.href);
+  return JSON.stringify({
+    title: (document.title || '수집한 이미지').split(/[|>]/)[0].trim(),
+    sourceUrl: location.href,
+    prevUrl: findLink(/이전화|이전\s*화|prev/i),
+    nextUrl: findLink(/다음화|다음\s*화|next/i),
+    pages: pages,
+  });
+}
+
 /**
  * core 함수들 + 본체를 하나의 자기완결적 `javascript:` 로 조립한다.
  *
@@ -168,4 +193,11 @@ export function buildBookmarklet(viewerOrigin) {
   return 'javascript:' + encodeURIComponent(`(function(){${body}})();`);
 }
 
-export { runCollector, BUNDLED, bundledConstants };
+/** 외부 페이지의 DOM에서 동기적으로 결과를 반환하는 Android WebView용 스크립트. */
+export function buildNativeCollectorScript() {
+  const fns = BUNDLED.map((fn) => fn.toString().replace(/^export\s+/, '')).join('\n');
+  const body = `${bundledConstants()}\n${fns}\nreturn (${collectForNative.toString()})();`;
+  return `(function(){${body}})();`;
+}
+
+export { runCollector, collectForNative, BUNDLED, bundledConstants };

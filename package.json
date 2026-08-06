@@ -8,14 +8,24 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve": "vite build && vite preview --port 4173",
-    "deploy": "vite build && wrangler deploy",
-    "test": "node test/image-rules-check.mjs && node test/layout-check.mjs && node test/chapter-nav-check.mjs && node test/bookmarklet-check.mjs && node test/proxy-guard-check.mjs && node test/harvester-check.mjs && node test/library-check.mjs"
+    "deploy": "vite build && node scripts/build-ota.mjs && wrangler deploy",
+    "ota:key": "node scripts/setup-ota-key.mjs",
+    "android:sync": "vite build && cap sync android",
+    "android:build": "npm run android:sync && node scripts/android-task.mjs build",
+    "android:open": "cap open android",
+    "android:run": "npm run android:sync && node scripts/android-task.mjs run",
+    "test": "node test/image-rules-check.mjs && node test/layout-check.mjs && node test/chapter-nav-check.mjs && node test/bookmarklet-check.mjs && node test/proxy-guard-check.mjs && node test/harvester-check.mjs && node test/library-check.mjs && node test/native-http-check.mjs && node test/ota-check.mjs"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
     "playwright-core": "^1.62.1",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "wrangler": "^4.119.0"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capawesome/capacitor-live-update": "^8.3.0",
     "jszip": "^3.10.1"
   }
 }

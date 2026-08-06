@@ -53,6 +53,7 @@ export class ReaderEngine {
     this.onPageChange = options.onPageChange || (() => {});
     this.onEpisodeEnd = options.onEpisodeEnd || (() => {});
     this.onZoomChange = options.onZoomChange || (() => {});
+    this.resolvePageUrl = options.resolvePageUrl || ((page) => ({ url: page.url, owned: false }));
 
     this.handleResize = debounce(() => this.render(), 150);
     window.addEventListener('resize', this.handleResize);
@@ -121,12 +122,15 @@ export class ReaderEngine {
   /* 이미지 엘리먼트 캐시                                                */
   /* ------------------------------------------------------------------ */
 
-  getImageElement(index) {
+  getImageElement(index, { defer = false } = {}) {
     const page = this.pages[index];
     if (!page || !page.url) return null;
 
     const cached = this.imageCache.get(page.url);
-    if (cached) return cached;
+    if (cached) {
+      if (!defer) this.loadImageElement(cached, page, index);
+      return cached;
+    }
 
     const img = document.createElement('img');
     img.className = 'manga-img is-loading';
@@ -136,20 +140,70 @@ export class ReaderEngine {
 
     img.addEventListener('load', () => {
       img.classList.remove('is-loading');
+      img.classList.remove('is-error');
+      img.closest('.manga-page-wrapper, .manga-strip-page')?.classList.remove('load-failed');
+      // 브라우저는 이미 바이트를 읽었다. URL 매핑만 즉시 놓아 원본 Blob을 붙들지 않는다.
+      this.releaseOwnedUrl(img);
       this.recordRatio(index, img.naturalWidth, img.naturalHeight);
     });
 
     img.addEventListener('error', () => {
-      img.classList.remove('is-loading');
-      img.classList.add('is-error');
-      const wrapper = img.closest('.manga-page-wrapper');
-      if (wrapper) wrapper.classList.add('load-failed');
+      this.markImageFailed(img);
     });
 
-    img.src = page.url;
     this.imageCache.set(page.url, img);
+    if (!defer) this.loadImageElement(img, page, index);
     this.evictDistantImages();
     return img;
+  }
+
+  loadImageElement(img, page, index, { reload = false } = {}) {
+    if (!img || (img.__loadStarted && !reload)) return;
+
+    if (reload) this.releaseOwnedUrl(img);
+    img.__loadStarted = true;
+    img.classList.add('is-loading');
+    img.classList.remove('is-error');
+    const loadToken = (img.__loadToken || 0) + 1;
+    img.__loadToken = loadToken;
+
+    Promise.resolve(this.resolvePageUrl(page))
+      .then((resolved) => {
+        const value = typeof resolved === 'string' ? { url: resolved, owned: false } : resolved;
+        if (!value?.url) throw new Error('표시할 이미지 주소가 없습니다.');
+
+        // 비동기 네이티브 요청 동안 화가 바뀌거나 캐시에서 밀렸으면 바이트를 즉시 놓는다.
+        if (img.__loadToken !== loadToken || this.imageCache.get(page.url) !== img) {
+          if (value.owned && value.url.startsWith('blob:')) URL.revokeObjectURL(value.url);
+          return;
+        }
+
+        img.__ownedObjectUrl = value.owned ? value.url : null;
+        img.src = reload && !value.owned ? bust(value.url) : value.url;
+      })
+      .catch((err) => {
+        if (img.__loadToken !== loadToken) return;
+        console.warn(`[이미지 ${index + 1}]`, err);
+        this.markImageFailed(img);
+      });
+  }
+
+  markImageFailed(img) {
+    img.classList.remove('is-loading');
+    img.classList.add('is-error');
+    img.closest('.manga-page-wrapper, .manga-strip-page')?.classList.add('load-failed');
+  }
+
+  releaseOwnedUrl(img) {
+    if (img?.__ownedObjectUrl) URL.revokeObjectURL(img.__ownedObjectUrl);
+    if (img) img.__ownedObjectUrl = null;
+  }
+
+  releaseImageElement(img) {
+    if (!img) return;
+    img.__loadToken = (img.__loadToken || 0) + 1;
+    this.releaseOwnedUrl(img);
+    img.remove();
   }
 
   /**
@@ -193,11 +247,12 @@ export class ReaderEngine {
       if (keepUrls.has(url)) continue;
       if (el.isConnected) continue;
       this.imageCache.delete(url);
+      this.releaseImageElement(el);
     }
   }
 
   releaseImageCache() {
-    for (const el of this.imageCache.values()) el.remove();
+    for (const el of this.imageCache.values()) this.releaseImageElement(el);
     this.imageCache.clear();
   }
 
@@ -363,17 +418,9 @@ export class ReaderEngine {
       wrapper.className = 'manga-strip-page';
       wrapper.dataset.index = String(index);
 
-      const img = document.createElement('img');
-      img.className = 'manga-img';
-      img.src = page.url;
-      img.alt = page.name || `Page ${page.pageNumber}`;
+      const img = this.getImageElement(index, { defer: index >= 3 && !!this.stripLoadObserver });
+      if (!img) return;
       img.loading = index < 3 ? 'eager' : 'lazy';
-      img.decoding = 'async';
-      img.draggable = false;
-      img.addEventListener('load', () =>
-        this.recordRatio(index, img.naturalWidth, img.naturalHeight)
-      );
-      img.addEventListener('error', () => wrapper.classList.add('load-failed'));
 
       const retry = document.createElement('button');
       retry.className = 'page-retry';
@@ -381,8 +428,7 @@ export class ReaderEngine {
       retry.textContent = '이미지 실패 · 다시 시도';
       retry.addEventListener('click', (e) => {
         e.stopPropagation();
-        wrapper.classList.remove('load-failed');
-        img.src = bust(this.pages[index].url);
+        this.retryPage(index);
       });
 
       wrapper.append(img, retry);
@@ -412,10 +458,10 @@ export class ReaderEngine {
   retryPage(index) {
     const page = this.pages[index];
     if (!page) return;
+    this.releaseImageElement(this.imageCache.get(page.url));
     this.imageCache.delete(page.url);
     const fresh = this.getImageElement(index);
     if (!fresh) return;
-    fresh.src = bust(page.url);
     this.render();
   }
 
@@ -464,13 +510,27 @@ export class ReaderEngine {
       },
       { root: this.container, threshold: 0.01, rootMargin: '-45% 0px -45% 0px' }
     );
+
+    this.stripLoadObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const index = Number(entry.target.dataset.index);
+          if (Number.isFinite(index)) this.getImageElement(index);
+          this.stripLoadObserver.unobserve(entry.target);
+        }
+      },
+      { root: this.container, threshold: 0, rootMargin: '150% 0px 150% 0px' }
+    );
   }
 
   observeStripPages() {
     if (!this.stripObserver) return;
     this.stripObserver.disconnect();
+    this.stripLoadObserver?.disconnect();
     for (const el of this.container.querySelectorAll('.manga-strip-page')) {
       this.stripObserver.observe(el);
+      this.stripLoadObserver?.observe(el);
     }
   }
 
@@ -656,6 +716,7 @@ export class ReaderEngine {
     window.removeEventListener('resize', this.handleResize);
     window.removeEventListener('orientationchange', this.handleResize);
     if (this.stripObserver) this.stripObserver.disconnect();
+    if (this.stripLoadObserver) this.stripLoadObserver.disconnect();
     this.releaseImageCache();
   }
 }

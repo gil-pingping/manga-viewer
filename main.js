@@ -11,6 +11,8 @@ import {
   upsertChapter,
 } from './src/core/chapterNav.js';
 import * as library from './src/library.js';
+import { isNativeApp, resolvePageImageUrl } from './src/platform/nativeHttp.js';
+import { finishStartupAndApplyUpdate } from './src/platform/liveUpdate.js';
 
 /* ==================================================================== */
 /* 상태                                                                  */
@@ -446,6 +448,7 @@ function initEngine() {
     direction: state.settings.direction,
     transitionType: state.settings.transition,
     autoPlaySpeed: state.settings.speed,
+    resolvePageUrl: resolvePageImageUrl,
 
     onPageChange: (info) => {
       el.slider.max = String(Math.max(1, info.totalPages));
@@ -1040,6 +1043,9 @@ async function consumeAuthToken() {
  * 조용히 실패하면 나중에 "왜 오프라인이 안 되지"로 헤매므로 이유를 남긴다.
  */
 async function registerServiceWorker() {
+  // APK는 번들·OTA 플러그인이 오프라인 껍데기를 관리한다. 서비스워커까지 겹치면
+  // 새 OTA 위에 예전 JS/CSS 캐시가 올라오는 두 번째 버전 관리자가 생긴다.
+  if (isNativeApp()) return;
   if (!('serviceWorker' in navigator)) return;
 
   if (!window.isSecureContext) {
@@ -1110,6 +1116,9 @@ async function boot() {
   }
 
   showChrome();
+
+  // 실패해도 현재 번들은 정상 사용한다. 성공하면 서명된 새 번들로 한 번 재시작한다.
+  finishStartupAndApplyUpdate().catch((err) => console.warn('[OTA] 업데이트 확인 실패', err));
 }
 
 boot();
