@@ -12,7 +12,11 @@ import {
 } from './src/core/chapterNav.js';
 import * as library from './src/library.js';
 import { isNativeApp, resolvePageImageUrl } from './src/platform/nativeHttp.js';
-import { finishStartupAndApplyUpdate, getCurrentBundleId } from './src/platform/liveUpdate.js';
+import {
+  confirmBundleReady,
+  finishStartupAndApplyUpdate,
+  getCurrentBundleId,
+} from './src/platform/liveUpdate.js';
 import { APP_VERSION, BUILD_TIME } from './src/version.js';
 import {
   createInitialState,
@@ -31,6 +35,13 @@ import {
 /* ==================================================================== */
 
 const state = createInitialState();
+
+// 9494f8b 리팩토링 때 실수로 지워졌던 선언들 — 없으면 strict mode에서
+// initEngine()의 `engine = ...` 대입이 ReferenceError로 부팅을 즉사시킨다.
+let engine = null;
+let chromeTimer = null;
+let toastTimer = null;
+let nextChapterPrefetch = null;
 
 function saveSettings() {
   persistSettings(state.settings);
@@ -1303,6 +1314,21 @@ async function loadLibraryIntoList() {
 }
 
 async function boot() {
+  // 롤백 타이머(10초)보다 먼저 — 서재 복원이 느리거나 실패해도 번들이 사형당하지 않게
+  confirmBundleReady().catch((err) => console.warn('[OTA] ready 신고 실패', err));
+
+  try {
+    await bootApp();
+  } catch (err) {
+    // 부팅이 죽어도 OTA 확인은 살려둔다 — 고장난 번들도 다음 배포로 자가치유되게
+    console.error('[부팅] 초기화 실패', err);
+  }
+
+  // 실패해도 현재 번들은 정상 사용한다. 성공하면 서명된 새 번들로 한 번 재시작한다.
+  finishStartupAndApplyUpdate().catch((err) => console.warn('[OTA] 업데이트 확인 실패', err));
+}
+
+async function bootApp() {
   initEngine();
   applySettingsToUI();
   wireEvents();
@@ -1363,9 +1389,6 @@ async function boot() {
   } catch {
     /* 무시 */
   }
-
-  // 실패해도 현재 번들은 정상 사용한다. 성공하면 서명된 새 번들로 한 번 재시작한다.
-  finishStartupAndApplyUpdate().catch((err) => console.warn('[OTA] 업데이트 확인 실패', err));
 }
 
 boot();
