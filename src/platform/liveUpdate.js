@@ -5,6 +5,17 @@ import { isNativeApp } from './nativeHttp.js';
 
 const MANIFEST_URL = `${OTA_ORIGIN}/ota/latest.json`;
 
+/** 현재 적용되어 있는 LiveUpdate 번들 ID 반환 */
+export async function getCurrentBundleId() {
+  if (!isNativeApp()) return 'web-dev';
+  try {
+    const { bundleId } = await LiveUpdate.getCurrentBundle();
+    return bundleId || 'web-apk-default';
+  } catch {
+    return 'web-native';
+  }
+}
+
 /** 앱이 정상 부팅했음을 알린 뒤, 있으면 서명된 새 웹 번들로 한 번 재시작한다. */
 export async function finishStartupAndApplyUpdate() {
   if (!isNativeApp()) return false;

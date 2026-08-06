@@ -58,6 +58,7 @@
         </button>
       </div>
       <button class="link-btn" id="empty-demo" type="button">데모 페이지로 화면 확인하기</button>
+      <div style="margin-top: 12px;"><span class="ota-tag" id="empty-ota-tag">OTA...</span></div>
     </div>
 
     <!-- 터치 영역: 좌/우 넘김, 가운데 메뉴 토글 -->
@@ -73,6 +74,7 @@
         <div class="title-block">
           <h1 class="series-title" id="manga-title">만화 뷰어</h1>
           <span class="chapter-badge" id="chapter-badge"></span>
+          <span class="ota-tag" id="ota-tag">OTA...</span>
         </div>
 
         <nav class="icon-row">
@@ -220,7 +222,10 @@
     <div class="modal" id="modal-episodes">
       <div class="sheet">
         <div class="sheet-head">
-          <h2>화수 목록</h2>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2>화수 목록</h2>
+            <span class="ota-tag" id="ep-modal-ota-tag">OTA...</span>
+          </div>
           <button class="close-btn close-modal" type="button" aria-label="닫기">
             <svg class="ico"><use href="#i-close"/></svg>
           </button>

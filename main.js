@@ -12,7 +12,7 @@ import {
 } from './src/core/chapterNav.js';
 import * as library from './src/library.js';
 import { isNativeApp, resolvePageImageUrl } from './src/platform/nativeHttp.js';
-import { finishStartupAndApplyUpdate } from './src/platform/liveUpdate.js';
+import { finishStartupAndApplyUpdate, getCurrentBundleId } from './src/platform/liveUpdate.js';
 import {
   createInitialState,
   saveSettings as persistSettings,
@@ -1347,6 +1347,18 @@ async function boot() {
   }
 
   showChrome();
+
+  // 현재 OTA 번들 버전 표시
+  try {
+    const bundleId = await getCurrentBundleId();
+    const tagText = bundleId ? bundleId.replace(/^web-/, '') : 'dev';
+    ['ota-tag', 'ep-modal-ota-tag', 'empty-ota-tag'].forEach((id) => {
+      const tagEl = document.getElementById(id);
+      if (tagEl) tagEl.textContent = `v-${tagText}`;
+    });
+  } catch {
+    /* 무시 */
+  }
 
   // 실패해도 현재 번들은 정상 사용한다. 성공하면 서명된 새 번들로 한 번 재시작한다.
   finishStartupAndApplyUpdate().catch((err) => console.warn('[OTA] 업데이트 확인 실패', err));
