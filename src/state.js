@@ -137,6 +137,11 @@ export function saveRecentChapters(chapters) {
         localStorage.removeItem(RECENT_CHAPTERS_KEY);
       }
     }
+
+    // IndexedDB 에도 이중 저장 (Capacitor live-update 등으로 localStorage 가 리셋되는 것에 대비)
+    import('./library.js').then((lib) => {
+      lib.saveRecentChaptersToDb(chapters);
+    }).catch(() => {});
   } catch {
     /* 무시 */
   }

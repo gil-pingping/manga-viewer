@@ -16,9 +16,10 @@
 import { fetchPageImage } from './platform/nativeHttp.js';
 
 const DB_NAME = 'mangaViewer';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const CHAPTERS = 'chapters';
 const PAGES = 'pages';
+const RECENT_CHAPTERS = 'recent_chapters';
 
 let dbPromise = null;
 
@@ -27,14 +28,16 @@ function openDb() {
 
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (e) => {
       const db = req.result;
       if (!db.objectStoreNames.contains(CHAPTERS)) {
         db.createObjectStore(CHAPTERS, { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains(PAGES)) {
-        // 키는 페이지의 프록시 경로. 원본 주소를 품고 있어 그대로 식별자가 된다
         db.createObjectStore(PAGES, { keyPath: 'url' });
+      }
+      if (!db.objectStoreNames.contains(RECENT_CHAPTERS)) {
+        db.createObjectStore(RECENT_CHAPTERS, { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -238,4 +241,44 @@ export function formatBytes(n) {
   if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)}GB`;
+}
+
+/** 최근 챕터 목록을 IndexedDB에 보관하여 localStorage 무실화/초기화 시에도 복구 */
+export async function saveRecentChaptersToDb(chapters) {
+  try {
+    const items = (chapters || [])
+      .filter((c) => !c.isDemo)
+      .slice(0, 30)
+      .map((c) => ({
+        id: c.id,
+        title: c.title,
+        label: c.label,
+        pages: c.pages,
+        sourceUrl: c.sourceUrl || null,
+        prevUrl: c.prevUrl || null,
+        nextUrl: c.nextUrl || null,
+        savedAt: c.savedAt || Date.now(),
+      }));
+
+    await run([RECENT_CHAPTERS], 'readwrite', async (tx) => {
+      const store = tx.objectStore(RECENT_CHAPTERS);
+      await reqToPromise(store.clear());
+      for (const item of items) {
+        store.put(item);
+      }
+    });
+  } catch (err) {
+    console.warn('[IndexedDB] 최근 챕터 동기화 실패', err);
+  }
+}
+
+export async function readRecentChaptersFromDb() {
+  try {
+    const rows = await run([RECENT_CHAPTERS], 'readonly', (tx) =>
+      reqToPromise(tx.objectStore(RECENT_CHAPTERS).getAll())
+    );
+    return (rows || []).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  } catch {
+    return [];
+  }
 }

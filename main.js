@@ -1265,9 +1265,10 @@ async function loadLibraryIntoList() {
   }));
 
   const recentList = readRecentChapters();
+  const recentDbList = await library.readRecentChaptersFromDb();
 
   // 복원된 챕터를 목록에 병합 (id와 sourceUrl 보존)
-  for (const item of [...restoredSaved, ...recentList]) {
+  for (const item of [...restoredSaved, ...recentList, ...recentDbList]) {
     if (!item?.pages || item.pages.length === 0) continue;
 
     // upsertChapter는 harvested.targetUrl로 기존 챕터를 찾으므로
