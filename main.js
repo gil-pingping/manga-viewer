@@ -438,7 +438,10 @@ function initEngine() {
       el.slider.max = String(Math.max(1, info.totalPages));
       el.slider.value = String(info.currentPageNum);
       el.indicator.textContent = `${info.currentPageNum} / ${info.totalPages}`;
-      saveProgress(state.currentId, info.currentPageNum);
+      if (state.currentId) {
+        saveProgress(state.currentId, info.currentPageNum);
+        saveLastChapterId(state.currentId);
+      }
 
       el.btnAutoplay.classList.toggle('is-active', info.isAutoPlaying);
       el.autoplayLabel.textContent = info.isAutoPlaying ? '멈춤' : '정주행';
@@ -1154,6 +1157,23 @@ function wireEvents() {
 
     showChrome();
   });
+
+  /* 앱 백그라운드 전환 및 강제 종료 시 영구 저장 확정 */
+  const syncStateOnLeave = () => {
+    if (state.currentId) {
+      saveLastChapterId(state.currentId);
+      if (engine && engine.currentIndex >= 0) {
+        saveProgress(state.currentId, engine.currentIndex + 1);
+      }
+    }
+    saveRecentChapters(state.chapters);
+  };
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') syncStateOnLeave();
+  });
+  window.addEventListener('pagehide', syncStateOnLeave);
+  window.addEventListener('beforeunload', syncStateOnLeave);
 }
 
 /* ==================================================================== */
