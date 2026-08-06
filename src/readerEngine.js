@@ -514,13 +514,29 @@ export class ReaderEngine {
     this.stripLoadObserver = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
           const index = Number(entry.target.dataset.index);
-          if (Number.isFinite(index)) this.getImageElement(index);
-          this.stripLoadObserver.unobserve(entry.target);
+          if (!Number.isFinite(index)) continue;
+
+          if (entry.isIntersecting) {
+            const img = this.getImageElement(index);
+            if (img && !entry.target.contains(img)) {
+              entry.target.prepend(img);
+            }
+            entry.target.classList.remove('is-virtualized');
+          } else {
+            // 화면 밖으로 멀어진 이미지 노드는 DOM에서 떼어 OOM을 방지한다 (높이는 유지)
+            const img = entry.target.querySelector('img.manga-img');
+            if (img && Math.abs(index - this.currentIndex) > 4) {
+              if (entry.target.offsetHeight > 0) {
+                entry.target.style.minHeight = `${entry.target.offsetHeight}px`;
+              }
+              img.remove();
+              entry.target.classList.add('is-virtualized');
+            }
+          }
         }
       },
-      { root: this.container, threshold: 0, rootMargin: '150% 0px 150% 0px' }
+      { root: this.container, threshold: 0, rootMargin: '200% 0px 200% 0px' }
     );
   }
 

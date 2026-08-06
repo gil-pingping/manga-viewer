@@ -181,6 +181,11 @@ button {
   margin: 0 auto;
 }
 
+.manga-strip-page.is-virtualized {
+  min-height: 400px;
+  background: var(--surface-2);
+}
+
 .manga-strip-page .manga-img {
   display: block;
   width: 100%;
