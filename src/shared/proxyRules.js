@@ -84,21 +84,25 @@ export function assertFetchableUrl(rawUrl, allowPrivate) {
     throw new Error('http/https 주소만 가져올 수 있습니다.');
   }
 
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  let cleanHost = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
   const isBlockedHost =
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.internal') ||
-    host === '::1' ||
-    host === '0.0.0.0' ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    /^f[cd][0-9a-f]{2}:/.test(host) ||
-    /^fe80:/.test(host);
+    cleanHost === 'localhost' ||
+    cleanHost.endsWith('.localhost') ||
+    cleanHost.endsWith('.internal') ||
+    cleanHost === '::1' ||
+    cleanHost === '0.0.0.0' ||
+    cleanHost === '0' ||
+    cleanHost.startsWith('::ffff:') ||
+    /^127\./.test(cleanHost) ||
+    /^10\./.test(cleanHost) ||
+    /^192\.168\./.test(cleanHost) ||
+    /^169\.254\./.test(cleanHost) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(cleanHost) ||
+    /^f[cd][0-9a-f]{2}:/.test(cleanHost) ||
+    /^fe80:/.test(cleanHost) ||
+    /^0x7f/i.test(cleanHost) ||
+    /^0177\./.test(cleanHost);
 
   if (isBlockedHost && !allowPrivate) {
     throw new Error(
