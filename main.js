@@ -8,6 +8,7 @@ import {
   realNeighbor as findRealNeighbor,
   hasAdjacent as canGoAdjacent,
   resolveAdjacent,
+  findAdjacentPrefetch,
   upsertChapter,
 } from './src/core/chapterNav.js';
 import * as library from './src/library.js';
@@ -55,6 +56,7 @@ const state = {
 let engine = null;
 let chromeTimer = null;
 let toastTimer = null;
+let nextChapterPrefetch = null;
 
 /* ==================================================================== */
 /* DOM                                                                   */
@@ -293,6 +295,26 @@ async function openChapter(chapterId, pageNumber) {
 
   const startAt = pageNumber ?? readProgress()[chapter.id] ?? 1;
   engine.loadChapter(forEngine, startAt);
+  prefetchNextChapter(chapter);
+}
+
+/** 다음 화 HTML/컷 목록만 조용히 준비한다. WebView 대화창이 필요한 사이트면 클릭 때 처리. */
+function prefetchNextChapter(chapter) {
+  if (!isNativeApp() || !chapter?.nextUrl) {
+    nextChapterPrefetch = null;
+    return;
+  }
+  if (
+    nextChapterPrefetch?.sourceId === chapter.id &&
+    nextChapterPrefetch.url === chapter.nextUrl
+  ) return;
+
+  const promise = UrlHarvester.fetchFromUrl(chapter.nextUrl, { silentRenderedFallback: true })
+    .catch((err) => {
+      console.debug('[다음 화 미리 받기] 클릭할 때 다시 시도합니다.', err.message);
+      return null;
+    });
+  nextChapterPrefetch = { sourceId: chapter.id, url: chapter.nextUrl, promise };
 }
 
 /**
@@ -344,7 +366,8 @@ async function goChapter(delta) {
   // kind === 'fetch' — 사이트가 준 인접 화 주소를 서버가 받아온다
   try {
     setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
-    const harvested = await UrlHarvester.fetchFromUrl(move.url);
+    const prepared = findAdjacentPrefetch(nextChapterPrefetch, state.currentId, delta, move.url);
+    const harvested = (prepared && await prepared) || await UrlHarvester.fetchFromUrl(move.url);
     addChapter(harvested, 'import');
     toast(`${harvested.pages.length}장 불러왔습니다.`);
   } catch (err) {

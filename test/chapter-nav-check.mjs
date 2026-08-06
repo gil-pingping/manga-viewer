@@ -12,6 +12,7 @@ import {
   realNeighbor,
   hasAdjacent,
   resolveAdjacent,
+  findAdjacentPrefetch,
   upsertChapter,
 } from '../src/core/chapterNav.js';
 
@@ -118,6 +119,16 @@ check('갈 곳이 없으면 none', () => {
 
 check('빈 목록도 none', () => {
   assert.deepEqual(resolveAdjacent([], 'a', 1), { kind: 'none' });
+});
+
+console.log('\n다음 화 미리 받기');
+
+check('현재 화의 다음 주소만 재사용한다', () => {
+  const promise = Promise.resolve('준비됨');
+  const prefetched = { sourceId: 'a', url: 'https://x.test/2', promise };
+  assert.equal(findAdjacentPrefetch(prefetched, 'a', 1, 'https://x.test/2'), promise);
+  assert.equal(findAdjacentPrefetch(prefetched, 'old', 1, 'https://x.test/2'), null);
+  assert.equal(findAdjacentPrefetch(prefetched, 'a', -1, 'https://x.test/2'), null);
 });
 
 console.log('\n목록에 넣기');

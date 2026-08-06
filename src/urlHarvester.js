@@ -84,20 +84,25 @@ export class UrlHarvester {
    * 네이버 웹툰처럼 본문 이미지 주소가 HTML 에 그대로 실려 오는 사이트는
    * 주소 하나만 넣으면 끝난다. 북마클릿을 설치할 필요가 없다.
    */
-  static async fetchFromUrl(targetUrl) {
+  static async fetchFromUrl(
+    targetUrl,
+    { silentRenderedFallback = false } = {}
+  ) {
     const parsedUrl = new URL(targetUrl);
     let res;
     try {
       res = await fetchPageDocument(targetUrl);
     } catch (err) {
-      if (isNativeApp()) return UrlHarvester.renderFromUrl(targetUrl);
+      if (isNativeApp()) {
+        return UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
+      }
       throw err;
     }
 
     if (!res.ok) {
       // 데이터센터 차단·로그인 요구면 서버 흉내를 더 내지 않는다. 실제 WebView로 연다.
       if (isNativeApp() && [401, 403, 429].includes(res.status)) {
-        return UrlHarvester.renderFromUrl(targetUrl);
+        return UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
       }
       let detail = `${res.status}`;
       try {
@@ -123,7 +128,7 @@ export class UrlHarvester {
      */
     if (looksJsRendered(doc)) {
       // 서버가 실제 브라우저로 열어 렌더된 DOM 을 읽는다. 주소 하나로 끝난다.
-      return await UrlHarvester.renderFromUrl(targetUrl);
+      return await UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
     }
 
     // DOM → 서술자 → 규칙. 규칙 자체는 core 에만 있다
@@ -163,12 +168,12 @@ export class UrlHarvester {
    * 한계: 서버의 브라우저에는 사용자의 로그인 세션이 없다. 로그인이 필요한
    * 페이지는 여전히 북마클릿(사용자 브라우저)만 가능하다.
    */
-  static async renderFromUrl(targetUrl) {
+  static async renderFromUrl(targetUrl, { silent = false } = {}) {
     let body = null;
     let res = null;
 
     if (isNativeApp()) {
-      body = { ok: true, ...(await collectRenderedPage(targetUrl)) };
+      body = { ok: true, ...(await collectRenderedPage(targetUrl, { silent })) };
     } else {
       res = await fetch(`/api/render-page?url=${encodeURIComponent(targetUrl)}`);
       try {

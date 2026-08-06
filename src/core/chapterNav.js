@@ -70,6 +70,12 @@ export function resolveAdjacent(chapters, currentId, delta) {
   return { kind: 'none' };
 }
 
+/** 현재 화의 다음 주소를 미리 받은 결과만 쓴다. 이전 화·오래된 비동기 결과는 제외. */
+export function findAdjacentPrefetch(prefetch, currentId, delta, url) {
+  if (delta <= 0 || prefetch?.sourceId !== currentId || prefetch.url !== url) return null;
+  return prefetch.promise;
+}
+
 /**
  * 수집 결과를 챕터 목록에 반영한다. 새 목록과 대상 챕터를 돌려준다.
  * 같은 출처를 다시 불러오면 새로 만들지 않고 그 자리에서 갱신한다

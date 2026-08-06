@@ -9,6 +9,8 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -18,6 +20,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.getcapacitor.JSObject;
@@ -38,9 +41,12 @@ public class PageCollectorPlugin extends Plugin {
     private Dialog dialog;
     private WebView webView;
     private TextView statusView;
+    private View collectorCover;
     private PluginCall activeCall;
     private String collectorScript;
     private int navigationGeneration;
+    private int failedGeneration = -1;
+    private boolean silentCollector;
 
     @PluginMethod
     public void collect(PluginCall call) {
@@ -61,14 +67,38 @@ public class PageCollectorPlugin extends Plugin {
 
         activeCall = call;
         collectorScript = script;
+        silentCollector = Boolean.TRUE.equals(call.getBoolean("silent", false));
         getActivity().runOnUiThread(() -> openCollector(url));
     }
 
     private void openCollector(String url) {
         dialog = new Dialog(getActivity(), android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
-        LinearLayout root = new LinearLayout(getContext());
-        root.setOrientation(LinearLayout.VERTICAL);
+        if (silentCollector) {
+            webView = new WebView(getContext());
+            configureWebView(webView);
+            dialog.setContentView(webView);
+            dialog.setOnCancelListener((ignored) -> finishError("수집이 중단됐습니다."));
+            dialog.show();
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                );
+                WindowManager.LayoutParams attributes = window.getAttributes();
+                attributes.alpha = 0.01f;
+                window.setAttributes(attributes);
+            }
+            webView.loadUrl(url);
+            return;
+        }
+
+        FrameLayout root = new FrameLayout(getContext());
         root.setBackgroundColor(Color.rgb(11, 12, 14));
+
+        LinearLayout browser = new LinearLayout(getContext());
+        browser.setOrientation(LinearLayout.VERTICAL);
 
         LinearLayout toolbar = new LinearLayout(getContext());
         toolbar.setOrientation(LinearLayout.HORIZONTAL);
@@ -76,16 +106,21 @@ public class PageCollectorPlugin extends Plugin {
         int padding = dp(8);
         toolbar.setPadding(padding, padding, padding, padding);
 
-        statusView = new TextView(getContext());
-        statusView.setText("페이지 여는 중…");
-        statusView.setTextColor(Color.WHITE);
-        statusView.setSingleLine(true);
-        toolbar.addView(statusView, new LinearLayout.LayoutParams(0, dp(48), 1));
-
         Button collectButton = new Button(getContext());
         collectButton.setText("가져오기");
-        collectButton.setOnClickListener((View ignored) -> wakeLazyImages(navigationGeneration, 0));
-        toolbar.addView(collectButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+        collectButton.setOnClickListener(
+            (View ignored) -> {
+                collectorCover.setVisibility(View.VISIBLE);
+                setStatus("이미지 찾는 중…");
+                wakeLazyImages(navigationGeneration, 0);
+            }
+        );
+        toolbar.addView(collectButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+
+        Button hideButton = new Button(getContext());
+        hideButton.setText("페이지 숨기기");
+        hideButton.setOnClickListener((View ignored) -> collectorCover.setVisibility(View.VISIBLE));
+        toolbar.addView(hideButton, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         Button closeButton = new Button(getContext());
         closeButton.setText("취소");
@@ -94,8 +129,36 @@ public class PageCollectorPlugin extends Plugin {
 
         webView = new WebView(getContext());
         configureWebView(webView);
-        root.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        browser.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        browser.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(browser, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout cover = new LinearLayout(getContext());
+        cover.setOrientation(LinearLayout.VERTICAL);
+        cover.setGravity(android.view.Gravity.CENTER);
+        cover.setPadding(dp(24), dp(24), dp(24), dp(24));
+        cover.setBackgroundColor(Color.rgb(11, 12, 14));
+        collectorCover = cover;
+
+        statusView = new TextView(getContext());
+        statusView.setText("페이지 여는 중…");
+        statusView.setTextColor(Color.WHITE);
+        statusView.setTextSize(18);
+        statusView.setGravity(android.view.Gravity.CENTER);
+        cover.addView(statusView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button showButton = new Button(getContext());
+        showButton.setText("로그인 · 페이지 보기");
+        showButton.setOnClickListener((View ignored) -> collectorCover.setVisibility(View.GONE));
+        LinearLayout.LayoutParams showParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(52));
+        showParams.topMargin = dp(20);
+        cover.addView(showButton, showParams);
+
+        Button coverCloseButton = new Button(getContext());
+        coverCloseButton.setText("취소");
+        coverCloseButton.setOnClickListener((View ignored) -> finishError("사용자가 취소했습니다."));
+        cover.addView(coverCloseButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(52)));
+        root.addView(cover, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         dialog.setContentView(root);
         dialog.setOnCancelListener((ignored) -> finishError("사용자가 취소했습니다."));
@@ -126,14 +189,16 @@ public class PageCollectorPlugin extends Plugin {
                 @Override
                 public void onPageStarted(WebView current, String url, android.graphics.Bitmap favicon) {
                     navigationGeneration++;
+                    failedGeneration = -1;
                     setStatus("페이지 여는 중…");
                 }
 
                 @Override
                 public void onPageFinished(WebView current, String url) {
                     int generation = navigationGeneration;
+                    if (generation == failedGeneration) return;
                     setStatus("이미지 찾는 중…");
-                    handler.postDelayed(() -> wakeLazyImages(generation, 0), 900);
+                    handler.postDelayed(() -> evaluateCollector(generation, true), 300);
                 }
 
                 @Override
@@ -143,7 +208,14 @@ public class PageCollectorPlugin extends Plugin {
 
                 @Override
                 public void onReceivedError(WebView current, WebResourceRequest request, WebResourceError error) {
-                    if (request.isForMainFrame()) setStatus("페이지 오류 · 로그인하거나 주소를 확인하세요");
+                    if (request.isForMainFrame()) {
+                        failedGeneration = navigationGeneration;
+                        if (silentCollector) {
+                            finishError("페이지를 열지 못했습니다.");
+                            return;
+                        }
+                        setStatus("페이지 오류 · 로그인하거나 주소를 확인하세요");
+                    }
                 }
 
                 @Override
@@ -152,7 +224,14 @@ public class PageCollectorPlugin extends Plugin {
                     WebResourceRequest request,
                     WebResourceResponse response
                 ) {
-                    if (request.isForMainFrame()) setStatus("사이트 응답 " + response.getStatusCode());
+                    if (request.isForMainFrame()) {
+                        failedGeneration = navigationGeneration;
+                        if (silentCollector) {
+                            finishError("사이트 응답 " + response.getStatusCode());
+                            return;
+                        }
+                        setStatus("사이트 응답 " + response.getStatusCode());
+                    }
                 }
             }
         );
@@ -199,10 +278,10 @@ public class PageCollectorPlugin extends Plugin {
     private void finishScrollAndCollect(int generation) {
         if (!isActive(generation)) return;
         webView.evaluateJavascript("window.scrollTo(0,0)", null);
-        handler.postDelayed(() -> evaluateCollector(generation), 450);
+        handler.postDelayed(() -> evaluateCollector(generation, false), 250);
     }
 
-    private void evaluateCollector(int generation) {
+    private void evaluateCollector(int generation, boolean scrollOnEmpty) {
         if (!isActive(generation)) return;
         webView.evaluateJavascript(
             collectorScript,
@@ -215,17 +294,34 @@ public class PageCollectorPlugin extends Plugin {
                     String collectorError = result.optString("collectorError", "");
                     if (!collectorError.isEmpty()) {
                         Log.e(TAG, collectorError);
+                        if (silentCollector) {
+                            finishError(shortMessage(collectorError));
+                            return;
+                        }
                         setStatus("수집 실패 · " + shortMessage(collectorError));
                         return;
                     }
                     JSONArray pages = result.optJSONArray("pages");
                     if (pages == null || pages.length() == 0) {
+                        if (scrollOnEmpty) {
+                            setStatus("lazy 이미지 확인 중…");
+                            wakeLazyImages(generation, 0);
+                            return;
+                        }
+                        if (silentCollector) {
+                            finishError("이미지를 찾지 못했습니다.");
+                            return;
+                        }
                         setStatus("이미지 없음 · 로그인 후 ‘가져오기’를 누르세요");
                         return;
                     }
                     finishSuccess(result);
                 } catch (Exception err) {
                     Log.e(TAG, "수집 결과를 읽지 못했습니다.", err);
+                    if (silentCollector) {
+                        finishError("수집 결과를 읽지 못했습니다.");
+                        return;
+                    }
                     setStatus("수집 실패 · 페이지를 확인하고 다시 누르세요");
                 }
             }
@@ -273,6 +369,8 @@ public class PageCollectorPlugin extends Plugin {
             webView = null;
         }
         statusView = null;
+        collectorCover = null;
+        silentCollector = false;
     }
 
     private boolean isAllowedUrl(String raw) {
