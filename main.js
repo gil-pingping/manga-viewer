@@ -532,80 +532,189 @@ function renderLibraryBar() {
   el.btnSave10.disabled = !savable;
 }
 
+/**
+ * sourceUrl 에서 시리즈 키를 뽑는다.
+ * 같은 사이트 + 같은 작품 경로를 공유하는 챕터를 한 묶음으로 보기 위한 것.
+ * 에피소드 번호 파라미터(no, episode, ep, chapter 등)를 제거하면 시리즈 키가 된다.
+ */
+const EPISODE_PARAM_NAMES = ['no', 'episode', 'ep', 'chapter', 'chap', 'toon'];
+
+function seriesKeyFromUrl(sourceUrl) {
+  if (!sourceUrl) return null;
+  try {
+    const url = new URL(sourceUrl);
+    for (const key of EPISODE_PARAM_NAMES) {
+      url.searchParams.delete(key);
+    }
+    // 경로 끝의 숫자도 제거 (예: /webtoon/12345 → /webtoon/)
+    url.pathname = url.pathname.replace(/\/\d+\/?$/, '/');
+    return `${url.origin}${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 챕터 제목에서 시리즈명을 추출한다.
+ * "작품명 123화", "작품명 - 제12화" 같은 패턴에서 작품명 부분만 뽑는다.
+ */
+function seriesNameFromTitle(title) {
+  if (!title) return '기타';
+  // 흔한 패턴: "제목 123화", "제목 - 제12화", "제목 #12", "제목 ep.12"
+  const cleaned = title
+    .replace(/\s*[-–]\s*(제?\s*\d+화|제?\s*\d+[화회]?|ep\.?\s*\d+|#\s*\d+|chapter\s*\d+)\s*$/i, '')
+    .replace(/\s+\d+화?\s*$/, '')
+    .trim();
+  return cleaned || title;
+}
+
 function renderEpisodeList() {
   renderLibraryBar();
 
-  el.epList.replaceChildren(
-    ...state.chapters.map((chapter) => {
-      const isCurrent = chapter.id === state.currentId;
-      const readTo = readProgress()[chapter.id];
-      const savedRow = state.saved.get(chapter.id);
+  // 시리즈 키로 챕터 그룹화
+  const groups = new Map(); // key → { name, chapters[] }
+  const groupOrder = [];    // 순서 보존
 
-      const item = document.createElement('div');
-      item.className = `ep-item${isCurrent ? ' is-current' : ''}`;
+  for (const chapter of state.chapters) {
+    let key;
+    let seriesName;
 
-      const open = document.createElement('button');
-      open.type = 'button';
-      open.className = 'ep-open';
-
-      const info = document.createElement('div');
-      const title = document.createElement('span');
-      title.className = 'ep-title';
-      title.textContent = chapter.title || '제목 없음';
-      const meta = document.createElement('span');
-      meta.className = 'ep-meta';
-      meta.textContent =
-        `${chapter.pages.length}장` +
-        (readTo ? ` · ${readTo}쪽까지 읽음` : '') +
-        (chapter.isDemo ? ' · 데모' : '');
-      info.append(title, meta);
-
-      const tags = document.createElement('span');
-      tags.style.display = 'flex';
-      tags.style.gap = '6px';
-      tags.style.alignItems = 'center';
-      tags.style.flex = 'none';
-
-      // "담김" 딱지는 곧 "서버 없이 읽힘" 이라는 뜻이다 — 가장 중요한 정보라 크게 붙인다
-      if (savedRow) {
-        const badge = document.createElement('span');
-        badge.className = 'ep-badge';
-        badge.textContent = `담김 ${library.formatBytes(savedRow.bytes)}`;
-        tags.append(badge);
+    if (chapter.isDemo) {
+      key = '__demo__';
+      seriesName = '데모';
+    } else {
+      const urlKey = seriesKeyFromUrl(chapter.sourceUrl);
+      if (urlKey) {
+        key = urlKey;
+        seriesName = seriesNameFromTitle(chapter.title);
+      } else {
+        // sourceUrl이 없는 경우 (파일, 붙여넣기) — 제목 기반 그룹화
+        key = `__local__${seriesNameFromTitle(chapter.title)}`;
+        seriesName = seriesNameFromTitle(chapter.title);
       }
-      if (isCurrent) {
-        const stateTag = document.createElement('span');
-        stateTag.className = 'ep-state';
-        stateTag.textContent = '읽는 중';
-        tags.append(stateTag);
-      }
+    }
 
-      open.append(info, tags);
-      open.addEventListener('click', () => {
-        openChapter(chapter.id);
-        closeModal(el.modalEpisodes);
-      });
-      item.append(open);
+    if (!groups.has(key)) {
+      const group = { name: seriesName, chapters: [] };
+      groups.set(key, group);
+      groupOrder.push(key);
+    }
+    groups.get(key).chapters.push(chapter);
+  }
 
-      if (savedRow) {
-        const del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'ep-del';
-        del.title = '서재에서 지우기';
-        del.setAttribute('aria-label', `${chapter.title || '이 화'} 서재에서 지우기`);
-        del.textContent = '✕';
-        del.addEventListener('click', async () => {
-          await library.deleteChapter(chapter.id);
-          await refreshSaved();
-          renderEpisodeList();
-          toast('서재에서 지웠습니다.');
-        });
-        item.append(del);
-      }
+  const elements = [];
 
-      return item;
-    })
-  );
+  for (const key of groupOrder) {
+    const group = groups.get(key);
+    const isSingleItem = group.chapters.length === 1;
+
+    // 1화짜리 그룹은 그룹 감싸기 없이 바로 표시
+    if (isSingleItem) {
+      elements.push(buildEpisodeItem(group.chapters[0]));
+      continue;
+    }
+
+    // 여러 화 묶음: 접기/펼치기 그룹
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ep-group';
+
+    // 현재 읽고 있는 화가 이 그룹에 있으면 펼쳐둔다
+    const hasCurrentChapter = group.chapters.some((c) => c.id === state.currentId);
+    if (!hasCurrentChapter) wrapper.classList.add('is-collapsed');
+
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.className = 'ep-group-header';
+    header.innerHTML = `
+      <span class="group-title">${group.name}</span>
+      <span class="group-count">${group.chapters.length}화</span>
+      <svg class="group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    `;
+    header.addEventListener('click', () => {
+      wrapper.classList.toggle('is-collapsed');
+    });
+
+    const body = document.createElement('div');
+    body.className = 'ep-group-body';
+    for (const chapter of group.chapters) {
+      body.appendChild(buildEpisodeItem(chapter));
+    }
+
+    wrapper.append(header, body);
+    elements.push(wrapper);
+  }
+
+  el.epList.replaceChildren(...elements);
+}
+
+function buildEpisodeItem(chapter) {
+  const isCurrent = chapter.id === state.currentId;
+  const readTo = readProgress()[chapter.id];
+  const savedRow = state.saved.get(chapter.id);
+
+  const item = document.createElement('div');
+  item.className = `ep-item${isCurrent ? ' is-current' : ''}`;
+
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'ep-open';
+
+  const info = document.createElement('div');
+  const title = document.createElement('span');
+  title.className = 'ep-title';
+  title.textContent = chapter.title || '제목 없음';
+  const meta = document.createElement('span');
+  meta.className = 'ep-meta';
+  meta.textContent =
+    `${chapter.pages.length}장` +
+    (readTo ? ` · ${readTo}쪽까지 읽음` : '') +
+    (chapter.isDemo ? ' · 데모' : '');
+  info.append(title, meta);
+
+  const tags = document.createElement('span');
+  tags.style.display = 'flex';
+  tags.style.gap = '6px';
+  tags.style.alignItems = 'center';
+  tags.style.flex = 'none';
+
+  // "담김" 딱지는 곧 "서버 없이 읽힘" 이라는 뜻이다 — 가장 중요한 정보라 크게 붙인다
+  if (savedRow) {
+    const badge = document.createElement('span');
+    badge.className = 'ep-badge';
+    badge.textContent = `담김 ${library.formatBytes(savedRow.bytes)}`;
+    tags.append(badge);
+  }
+  if (isCurrent) {
+    const stateTag = document.createElement('span');
+    stateTag.className = 'ep-state';
+    stateTag.textContent = '읽는 중';
+    tags.append(stateTag);
+  }
+
+  open.append(info, tags);
+  open.addEventListener('click', () => {
+    openChapter(chapter.id);
+    closeModal(el.modalEpisodes);
+  });
+  item.append(open);
+
+  if (savedRow) {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'ep-del';
+    del.title = '서재에서 지우기';
+    del.setAttribute('aria-label', `${chapter.title || '이 화'} 서재에서 지우기`);
+    del.textContent = '✕';
+    del.addEventListener('click', async () => {
+      await library.deleteChapter(chapter.id);
+      await refreshSaved();
+      renderEpisodeList();
+      toast('서재에서 지웠습니다.');
+    });
+    item.append(del);
+  }
+
+  return item;
 }
 
 /* ==================================================================== */
