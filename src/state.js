@@ -125,7 +125,18 @@ export function saveRecentChapters(chapters) {
         nextUrl: c.nextUrl || null,
         savedAt: c.savedAt || Date.now(),
       }));
-    localStorage.setItem(RECENT_CHAPTERS_KEY, JSON.stringify(filtered));
+    try {
+      localStorage.setItem(RECENT_CHAPTERS_KEY, JSON.stringify(filtered));
+    } catch {
+      // 용량 초과 시 줄여서 재시도
+      const reduced = filtered.slice(0, 10);
+      try {
+        localStorage.setItem(RECENT_CHAPTERS_KEY, JSON.stringify(reduced));
+      } catch {
+        // 그래도 안 되면 포기
+        localStorage.removeItem(RECENT_CHAPTERS_KEY);
+      }
+    }
   } catch {
     /* 무시 */
   }

@@ -1265,8 +1265,19 @@ async function loadLibraryIntoList() {
   }));
 
   const recentList = readRecentChapters();
+
+  // 복원된 챕터를 목록에 병합 (id와 sourceUrl 보존)
   for (const item of [...restoredSaved, ...recentList]) {
     if (!item?.pages || item.pages.length === 0) continue;
+
+    // upsertChapter는 harvested.targetUrl로 기존 챕터를 찾으므로
+    // sourceUrl을 targetUrl로도 설정해줘야 중복 방지가 작동한다
+    item.targetUrl = item.sourceUrl;
+
+    // 이미 같은 id가 목록에 있으면 건너뛴다 (데모와 겹치지 않는 한)
+    const alreadyExists = state.chapters.some((c) => c.id === item.id && !c.isDemo);
+    if (alreadyExists) continue;
+
     const { chapters } = upsertChapter(state.chapters, item, item.id);
     state.chapters = chapters;
   }
@@ -1303,6 +1314,12 @@ async function boot() {
 
     if (targetChapter) {
       await openChapter(targetChapter.id);
+      // 복원된 목록이 있으면 첫 화면에서 화수 목록을 바로 보여준다
+      const hasRealChapters = state.chapters.some((c) => !c.isDemo);
+      if (hasRealChapters) {
+        renderEpisodeList();
+        openModal(el.modalEpisodes);
+      }
     } else {
       showEmptyState();
     }
