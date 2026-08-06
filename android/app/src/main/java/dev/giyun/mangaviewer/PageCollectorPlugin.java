@@ -302,12 +302,13 @@ public class PageCollectorPlugin extends Plugin {
                         return;
                     }
                     JSONArray pages = result.optJSONArray("pages");
-                    if (pages == null || pages.length() == 0) {
-                        if (scrollOnEmpty) {
-                            setStatus("lazy 이미지 확인 중…");
-                            wakeLazyImages(generation, 0);
-                            return;
-                        }
+                    int pageCount = pages == null ? 0 : pages.length();
+                    if (shouldScrollBeforeAccepting(pageCount, scrollOnEmpty)) {
+                        setStatus("lazy 이미지 확인 중…");
+                        wakeLazyImages(generation, 0);
+                        return;
+                    }
+                    if (pageCount == 0) {
                         if (silentCollector) {
                             finishError("이미지를 찾지 못했습니다.");
                             return;
@@ -330,6 +331,10 @@ public class PageCollectorPlugin extends Plugin {
 
     private boolean isActive(int generation) {
         return activeCall != null && webView != null && generation == navigationGeneration;
+    }
+
+    static boolean shouldScrollBeforeAccepting(int pageCount, boolean firstPass) {
+        return firstPass && pageCount < 3;
     }
 
     private void setStatus(String text) {
