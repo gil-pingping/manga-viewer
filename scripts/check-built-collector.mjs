@@ -7,9 +7,9 @@ const source = (
 ).join('\n');
 
 for (const name of ['selectContentImages', 'collectDescriptors']) {
-  if (!source.includes(`function ${name}`)) {
-    throw new Error(`프로덕션 빌드가 수집 함수 이름을 변경했습니다: ${name}`);
+  if (!new RegExp(`["']${name}["']`).test(source)) {
+    throw new Error(`프로덕션 빌드에 수집 함수의 고정 이름이 없습니다: ${name}`);
   }
 }
 
-console.log('프로덕션 수집 함수 이름 검증 통과');
+console.log('프로덕션 수집 함수 고정 이름 검증 통과');

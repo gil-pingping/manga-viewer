@@ -1,5 +1,5 @@
 export const OTA_ORIGIN = 'https://manga-viewer.giyun.workers.dev';
-export const NATIVE_VERSION = 2;
+export const NATIVE_VERSION = 3;
 
 /** 원격 코드는 네이티브 권한을 쓰므로 형식·출처를 모두 고정한다. */
 export function validateOtaManifest(raw, options = {}) {

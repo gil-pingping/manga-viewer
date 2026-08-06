@@ -14,6 +14,7 @@ import {
   buildNativeCollectorScript,
   BUNDLED,
   bundledConstants,
+  serializeBundledFunctions,
 } from '../src/collector.js';
 import { selectContentImages } from '../src/core/imageRules.js';
 import { ALL_FIXTURES } from './fixtures/site-samples.mjs';
@@ -64,9 +65,17 @@ check('export 키워드가 남아있지 않다', () => {
 });
 
 check('core 함수가 빠짐없이 실렸다', () => {
-  for (const fn of BUNDLED) {
-    assert.ok(decoded.includes(fn.name), `${fn.name} 이 빠졌다`);
+  for (const [name] of BUNDLED) {
+    assert.ok(decoded.includes(`var ${name} =`), `${name} 이 빠졌다`);
   }
+});
+
+check('번들러가 함수 이름을 바꿔도 주입 이름은 고정된다', () => {
+  const renamed = function selectContentImages$1() {
+    return 7;
+  };
+  const source = `${serializeBundledFunctions([['selectContentImages', renamed]])}\nreturn selectContentImages();`;
+  assert.equal(new Function(source)(), 7);
 });
 
 check('상수도 값으로 실렸다', () => {
@@ -95,7 +104,7 @@ console.log('\n직렬화된 규칙 == core 규칙');
  * 실제 북마클릿이 페이지에서 겪는 것과 같은 조건(모듈 없음)이다.
  */
 function reviveSelectFromBookmarklet() {
-  const fns = BUNDLED.map((fn) => fn.toString().replace(/^export\s+/, '')).join('\n');
+  const fns = serializeBundledFunctions();
   const src = `${bundledConstants()}\n${fns}\nreturn selectContentImages;`;
   return new Function(src)();
 }

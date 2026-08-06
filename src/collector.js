@@ -16,25 +16,32 @@ import * as dom from './collect/fromDocument.js';
 
 /** 북마클릿에 함께 실어야 하는 순수 함수들 (의존 순서대로) */
 const BUNDLED = [
-  rules.largestFromSrcset,
-  rules.pickSource,
-  rules.absolutize,
-  rules.isBigEnough,
-  rules.upgradeResolution,
-  rules.parseSeriesKey, // findNumberedSeries 가 쓴다 — 빠지면 페이지에서 ReferenceError
-  rules.findNumberedSeries,
-  rules.filenameShape, // findDominantShape 가 쓴다
-  rules.findDominantShape,
-  rules.sortByExplicitPage,
-  rules.keepDominantDirectory,
-  rules.selectContentImages,
-  dom.backgroundImageUrl, // findContentRoot·toDescriptor 가 쓴다
-  dom.countImageish, // findContentRoot 가 쓴다
-  dom.findContentRoot,
-  dom.inheritedPageIndex, // collectDescriptors 가 쓴다
-  dom.toDescriptor,
-  dom.collectDescriptors,
+  ['largestFromSrcset', rules.largestFromSrcset],
+  ['pickSource', rules.pickSource],
+  ['absolutize', rules.absolutize],
+  ['isBigEnough', rules.isBigEnough],
+  ['upgradeResolution', rules.upgradeResolution],
+  ['parseSeriesKey', rules.parseSeriesKey], // findNumberedSeries 가 쓴다 — 빠지면 페이지에서 ReferenceError
+  ['findNumberedSeries', rules.findNumberedSeries],
+  ['filenameShape', rules.filenameShape], // findDominantShape 가 쓴다
+  ['findDominantShape', rules.findDominantShape],
+  ['sortByExplicitPage', rules.sortByExplicitPage],
+  ['keepDominantDirectory', rules.keepDominantDirectory],
+  ['selectContentImages', rules.selectContentImages],
+  ['backgroundImageUrl', dom.backgroundImageUrl], // findContentRoot·toDescriptor 가 쓴다
+  ['countImageish', dom.countImageish], // findContentRoot 가 쓴다
+  ['findContentRoot', dom.findContentRoot],
+  ['inheritedPageIndex', dom.inheritedPageIndex], // collectDescriptors 가 쓴다
+  ['toDescriptor', dom.toDescriptor],
+  ['collectDescriptors', dom.collectDescriptors],
 ];
+
+/** 번들러가 함수 이름을 바꿔도 페이지에서 쓸 이름은 고정한다. */
+function serializeBundledFunctions(entries = BUNDLED) {
+  return entries
+    .map(([name, fn]) => `var ${name} = (${fn.toString().replace(/^export\s+/, '')});`)
+    .join('\n');
+}
 
 /** 위 함수들이 참조하는 모듈 상수. 값으로 박아넣는다 */
 function bundledConstants() {
@@ -203,7 +210,7 @@ function collectForNative() {
 export function buildBookmarklet(viewerOrigin) {
   const origin = viewerOrigin || window.location.origin;
 
-  const fns = BUNDLED.map((fn) => fn.toString().replace(/^export\s+/, '')).join('\n');
+  const fns = serializeBundledFunctions();
   const body = `${bundledConstants()}\n${fns}\n(${runCollector.toString()})(${JSON.stringify(origin)});`;
 
   return 'javascript:' + encodeURIComponent(`(function(){${body}})();`);
@@ -211,9 +218,9 @@ export function buildBookmarklet(viewerOrigin) {
 
 /** 외부 페이지의 DOM에서 동기적으로 결과를 반환하는 Android WebView용 스크립트. */
 export function buildNativeCollectorScript() {
-  const fns = BUNDLED.map((fn) => fn.toString().replace(/^export\s+/, '')).join('\n');
+  const fns = serializeBundledFunctions();
   const body = `${bundledConstants()}\n${fns}\nreturn (${collectForNative.toString()})();`;
   return `(function(){try{${body}}catch(e){return JSON.stringify({collectorError:String(e&&e.stack||e)})}})();`;
 }
 
-export { runCollector, collectForNative, BUNDLED, bundledConstants };
+export { runCollector, collectForNative, BUNDLED, bundledConstants, serializeBundledFunctions };
