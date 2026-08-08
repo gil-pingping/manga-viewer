@@ -1,4 +1,6 @@
 import { UrlHarvester } from './src/urlHarvester.js';
+import { isAnilifeUrl, parseAnilifePage } from './src/collect/anilifeCollector.js';
+import { AnimePlayer } from './src/ui/animePlayer.js';
 import { ReaderEngine } from './src/readerEngine.js';
 import { buildBookmarklet } from './src/collector.js';
 import {
@@ -47,6 +49,56 @@ let engine = null;
 let chromeTimer = null;
 let toastTimer = null;
 let nextChapterPrefetch = null;
+let animePlayer = null;
+
+function initAnimePlayer() {
+  if (animePlayer) return;
+  animePlayer = new AnimePlayer({
+    onNextEpisode: () => {
+      if (!animePlayer.currentAnime) return;
+      const cur = animePlayer.currentAnime;
+      const nextEpNo = cur.episodeNumber + 1;
+      let nextItem = cur.episodesMap?.find((e) => e.episodeNo === nextEpNo);
+
+      if (!nextItem) {
+        showToast(`다음 ${nextEpNo}화 탐색 중...`);
+      } else {
+        showToast(`${nextEpNo}화 0초 즉시 이동 재생!`);
+        fetchAnilifeEpisodeAndPlay(nextItem.url);
+      }
+    },
+    onPrevEpisode: () => {
+      if (!animePlayer.currentAnime) return;
+      const cur = animePlayer.currentAnime;
+      const prevEpNo = Math.max(1, cur.episodeNumber - 1);
+      let prevItem = cur.episodesMap?.find((e) => e.episodeNo === prevEpNo);
+      if (prevItem) {
+        fetchAnilifeEpisodeAndPlay(prevItem.url);
+      }
+    },
+  });
+}
+
+async function fetchAnilifeEpisodeAndPlay(url) {
+  try {
+    initAnimePlayer();
+    const fetched = await UrlHarvester.fetchFromUrl(url, { silentRenderedFallback: true });
+    if (fetched && fetched.rawText) {
+      const animeData = parseAnilifePage(fetched.rawText, url);
+      if (animeData) {
+        animePlayer.loadAnime(animeData);
+        return;
+      }
+    }
+    animePlayer.loadAnime({
+      seriesTitle: '애니메이션',
+      episodeNumber: 1,
+      streamUrl: url,
+    });
+  } catch (err) {
+    showToast('애니 재생 오류: ' + err.message, true);
+  }
+}
 
 function saveSettings() {
   persistSettings(state.settings);
@@ -1069,7 +1121,14 @@ async function submitImport() {
     return;
   }
 
-  // 페이지 주소 하나 → 서버가 HTML 받아 컷을 찾아온다 (북마클릿 불필요)
+  // 애니라이프(anilife.app) 애니메이션 주소 감지 시 전용 비디오 플레이어 연동
+  if (isAnilifeUrl(raw)) {
+    el.rawInput.value = '';
+    closeModal(el.modalImport);
+    showToast('애니라이프 애니메이션을 불러옵니다...');
+    fetchAnilifeEpisodeAndPlay(raw);
+    return;
+  }
   if (looksLikeSinglePageUrl(raw)) {
     try {
       setBusy(true, '페이지에서 만화 찾는 중…');
