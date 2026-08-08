@@ -154,6 +154,7 @@ export function createInitialState() {
     /** @type {Chapter[]} */
     chapters: [],
     currentId: null,
+    currentShelfTab: 'comic',
     settings: loadSettings(),
     chromeVisible: true,
     saved: new Map(),

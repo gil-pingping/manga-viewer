@@ -156,6 +156,8 @@ const el = {
 
   epList: $('episode-list'),
   btnShelfEdit: $('btn-shelf-edit'),
+  tabComicShelf: $('tab-comic-shelf'),
+  tabAnimeShelf: $('tab-anime-shelf'),
   libUsage: $('lib-usage'),
   btnManageLinks: $('btn-manage-links'),
   btnApplyLinkFix: $('btn-apply-link-fix'),
@@ -648,6 +650,21 @@ function seriesNameFromTitle(title) {
 function renderEpisodeList(selectedSeriesTitle = null) {
   renderLibraryBar();
 
+  if (el.tabComicShelf && el.tabAnimeShelf) {
+    const isComic = state.currentShelfTab === 'comic';
+    el.tabComicShelf.className = isComic ? 'btn btn-sm btn-primary' : 'btn btn-sm';
+    el.tabAnimeShelf.className = !isComic ? 'btn btn-sm btn-primary' : 'btn btn-sm';
+
+    el.tabComicShelf.onclick = () => {
+      state.currentShelfTab = 'comic';
+      renderEpisodeList();
+    };
+    el.tabAnimeShelf.onclick = () => {
+      state.currentShelfTab = 'anime';
+      renderEpisodeList();
+    };
+  }
+
   if (el.btnShelfEdit) {
     el.btnShelfEdit.textContent = state.isShelfEditMode ? '✅ 편집 완료' : '✏️ 서재 편집';
     el.btnShelfEdit.className = state.isShelfEditMode ? 'btn btn-sm btn-primary' : 'btn btn-sm';
@@ -657,7 +674,13 @@ function renderEpisodeList(selectedSeriesTitle = null) {
     };
   }
 
-  const seriesGroups = groupChaptersBySeries(state.chapters);
+  // 탭 상태(만화 vs 애니)에 따라 필터링
+  const filteredChapters = state.chapters.filter((c) => {
+    if (state.currentShelfTab === 'anime') return c.type === 'anime';
+    return c.type !== 'anime';
+  });
+
+  const seriesGroups = groupChaptersBySeries(filteredChapters);
 
   // 특정 시리즈가 선택되었을 때는 회차 텍스트 목록 뷰 렌더링
   if (selectedSeriesTitle) {
@@ -666,6 +689,20 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       renderSeriesChaptersView(targetGroup);
       return;
     }
+  }
+
+  // 최근 감상한 챕터로 해당 탭의 최신 작품 뱃지 판별
+  const lastChapterId = readLastChapterId();
+  let mostRecentSeriesTitle = null;
+  if (lastChapterId) {
+    const lastCap = state.chapters.find((c) => c.id === lastChapterId);
+    if (lastCap) {
+      const matchGroup = seriesGroups.find((g) => g.chapters.some((ch) => ch.id === lastCap.id));
+      if (matchGroup) mostRecentSeriesTitle = matchGroup.seriesTitle;
+    }
+  }
+  if (!mostRecentSeriesTitle && seriesGroups.length > 0) {
+    mostRecentSeriesTitle = seriesGroups[0].seriesTitle;
   }
 
   // 기본 상태: E-Book 책장 그리드 렌더링
@@ -795,6 +832,19 @@ function renderEpisodeList(selectedSeriesTitle = null) {
     badge.textContent = `${group.chapters.length}화`;
     coverWrapper.appendChild(badge);
 
+    const isMostRecent = group.seriesTitle === mostRecentSeriesTitle;
+    if (isMostRecent) {
+      const recentBadge = document.createElement('span');
+      recentBadge.className = 'shelf-badge shelf-recent-badge';
+      recentBadge.style.left = '8px';
+      recentBadge.style.right = 'auto';
+      recentBadge.style.background = 'var(--accent)';
+      recentBadge.style.color = '#000';
+      recentBadge.style.fontWeight = 'bold';
+      recentBadge.textContent = state.currentShelfTab === 'anime' ? '📌 최근 시청' : '📌 최근 읽음';
+      coverWrapper.appendChild(recentBadge);
+    }
+
     // 편집 모드일 때만 표지 수동 새로고침(🔄) 버튼 노출
     if (state.isShelfEditMode && referer) {
       const refreshCoverBtn = document.createElement('button');
@@ -834,6 +884,21 @@ function renderEpisodeList(selectedSeriesTitle = null) {
 
     card.append(coverWrapper, info);
     elements.push(card);
+  }
+
+  if (elements.length === 0) {
+    const emptyNotice = document.createElement('div');
+    emptyNotice.className = 'shelf-empty-notice';
+    emptyNotice.style.padding = '40px 20px';
+    emptyNotice.style.textAlign = 'center';
+    emptyNotice.style.color = 'var(--text-dim)';
+    emptyNotice.style.gridColumn = '1 / -1';
+    emptyNotice.innerHTML = `
+      <div style="font-size: 32px; margin-bottom: 8px;">${state.currentShelfTab === 'anime' ? '🎬' : '📚'}</div>
+      <p style="font-size: 15px; margin-bottom: 4px;">${state.currentShelfTab === 'anime' ? '담긴 애니메이션이 없습니다.' : '담긴 만화가 없습니다.'}</p>
+      <span style="font-size: 12px;">상단 '불러오기' 버튼으로 주소를 붙여넣으면 서재에 자동 추가됩니다.</span>
+    `;
+    elements.push(emptyNotice);
   }
 
   el.epList.className = 'ep-list ebook-shelf';
