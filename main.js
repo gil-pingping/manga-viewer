@@ -1,6 +1,4 @@
 import { UrlHarvester } from './src/urlHarvester.js';
-import { isAnilifeUrl, parseAnilifePage } from './src/collect/anilifeCollector.js';
-import { AnimePlayer } from './src/ui/animePlayer.js';
 import { ReaderEngine } from './src/readerEngine.js';
 import { buildBookmarklet } from './src/collector.js';
 import {
@@ -49,56 +47,6 @@ let engine = null;
 let chromeTimer = null;
 let toastTimer = null;
 let nextChapterPrefetch = null;
-let animePlayer = null;
-
-function initAnimePlayer() {
-  if (animePlayer) return;
-  animePlayer = new AnimePlayer({
-    onNextEpisode: () => {
-      if (!animePlayer.currentAnime) return;
-      const cur = animePlayer.currentAnime;
-      const nextEpNo = cur.episodeNumber + 1;
-      let nextItem = cur.episodesMap?.find((e) => e.episodeNo === nextEpNo);
-
-      if (!nextItem) {
-        showToast(`다음 ${nextEpNo}화 탐색 중...`);
-      } else {
-        showToast(`${nextEpNo}화 0초 즉시 이동 재생!`);
-        fetchAnilifeEpisodeAndPlay(nextItem.url);
-      }
-    },
-    onPrevEpisode: () => {
-      if (!animePlayer.currentAnime) return;
-      const cur = animePlayer.currentAnime;
-      const prevEpNo = Math.max(1, cur.episodeNumber - 1);
-      let prevItem = cur.episodesMap?.find((e) => e.episodeNo === prevEpNo);
-      if (prevItem) {
-        fetchAnilifeEpisodeAndPlay(prevItem.url);
-      }
-    },
-  });
-}
-
-async function fetchAnilifeEpisodeAndPlay(url) {
-  try {
-    initAnimePlayer();
-    const fetched = await UrlHarvester.fetchFromUrl(url, { silentRenderedFallback: true });
-    if (fetched && fetched.rawText) {
-      const animeData = parseAnilifePage(fetched.rawText, url);
-      if (animeData) {
-        animePlayer.loadAnime(animeData);
-        return;
-      }
-    }
-    animePlayer.loadAnime({
-      seriesTitle: '애니메이션',
-      episodeNumber: 1,
-      streamUrl: url,
-    });
-  } catch (err) {
-    showToast('애니 재생 오류: ' + err.message, true);
-  }
-}
 
 function saveSettings() {
   persistSettings(state.settings);
@@ -156,8 +104,6 @@ const el = {
 
   epList: $('episode-list'),
   btnShelfEdit: $('btn-shelf-edit'),
-  tabComicShelf: $('tab-comic-shelf'),
-  tabAnimeShelf: $('tab-anime-shelf'),
   libUsage: $('lib-usage'),
   btnManageLinks: $('btn-manage-links'),
   btnApplyLinkFix: $('btn-apply-link-fix'),
@@ -571,10 +517,6 @@ function toggleChrome() {
 /* ==================================================================== */
 
 function openModal(modal) {
-  if (!modal) return;
-  if (modal === el.modalEpisodes) {
-    renderEpisodeList();
-  }
   modal.classList.add('is-open');
   showChrome(false);
 }
@@ -654,21 +596,6 @@ function seriesNameFromTitle(title) {
 function renderEpisodeList(selectedSeriesTitle = null) {
   renderLibraryBar();
 
-  if (el.tabComicShelf && el.tabAnimeShelf) {
-    const isComic = state.currentShelfTab === 'comic';
-    el.tabComicShelf.className = isComic ? 'btn btn-sm btn-primary' : 'btn btn-sm';
-    el.tabAnimeShelf.className = !isComic ? 'btn btn-sm btn-primary' : 'btn btn-sm';
-
-    el.tabComicShelf.onclick = () => {
-      state.currentShelfTab = 'comic';
-      renderEpisodeList();
-    };
-    el.tabAnimeShelf.onclick = () => {
-      state.currentShelfTab = 'anime';
-      renderEpisodeList();
-    };
-  }
-
   if (el.btnShelfEdit) {
     el.btnShelfEdit.textContent = state.isShelfEditMode ? '✅ 편집 완료' : '✏️ 서재 편집';
     el.btnShelfEdit.className = state.isShelfEditMode ? 'btn btn-sm btn-primary' : 'btn btn-sm';
@@ -678,13 +605,7 @@ function renderEpisodeList(selectedSeriesTitle = null) {
     };
   }
 
-  // 탭 상태(만화 vs 애니)에 따라 필터링
-  const filteredChapters = state.chapters.filter((c) => {
-    if (state.currentShelfTab === 'anime') return c.type === 'anime';
-    return c.type !== 'anime';
-  });
-
-  const seriesGroups = groupChaptersBySeries(filteredChapters);
+  const seriesGroups = groupChaptersBySeries(state.chapters);
 
   // 특정 시리즈가 선택되었을 때는 회차 텍스트 목록 뷰 렌더링
   if (selectedSeriesTitle) {
@@ -693,20 +614,6 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       renderSeriesChaptersView(targetGroup);
       return;
     }
-  }
-
-  // 최근 감상한 챕터로 해당 탭의 최신 작품 뱃지 판별
-  const lastChapterId = readLastChapterId();
-  let mostRecentSeriesTitle = null;
-  if (lastChapterId) {
-    const lastCap = state.chapters.find((c) => c.id === lastChapterId);
-    if (lastCap) {
-      const matchGroup = seriesGroups.find((g) => g.chapters.some((ch) => ch.id === lastCap.id));
-      if (matchGroup) mostRecentSeriesTitle = matchGroup.seriesTitle;
-    }
-  }
-  if (!mostRecentSeriesTitle && seriesGroups.length > 0) {
-    mostRecentSeriesTitle = seriesGroups[0].seriesTitle;
   }
 
   // 기본 상태: E-Book 책장 그리드 렌더링
@@ -824,30 +731,12 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       coverWrapper.insertBefore(img, coverWrapper.firstChild);
     };
 
-    card.dataset.seriesTitle = group.seriesTitle;
-    if (referer) card.dataset.referer = referer;
-
-    // loading="lazy" 제거 및 즉시 DOM 주입으로 WebView 레이지 로딩 블락 완전 해결
     loadCoverImage();
-    group.loadCoverImageFn = loadCoverImage;
 
     const badge = document.createElement('span');
     badge.className = 'shelf-badge';
     badge.textContent = `${group.chapters.length}화`;
     coverWrapper.appendChild(badge);
-
-    const isMostRecent = group.seriesTitle === mostRecentSeriesTitle;
-    if (isMostRecent) {
-      const recentBadge = document.createElement('span');
-      recentBadge.className = 'shelf-badge shelf-recent-badge';
-      recentBadge.style.left = '8px';
-      recentBadge.style.right = 'auto';
-      recentBadge.style.background = 'var(--accent)';
-      recentBadge.style.color = '#000';
-      recentBadge.style.fontWeight = 'bold';
-      recentBadge.textContent = state.currentShelfTab === 'anime' ? '📌 최근 시청' : '📌 최근 읽음';
-      coverWrapper.appendChild(recentBadge);
-    }
 
     // 편집 모드일 때만 표지 수동 새로고침(🔄) 버튼 노출
     if (state.isShelfEditMode && referer) {
@@ -856,6 +745,13 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       refreshCoverBtn.className = 'shelf-refresh-btn';
       refreshCoverBtn.title = '작품 표지 새로고침';
       refreshCoverBtn.innerHTML = '🔄';
+      refreshCoverBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        group.forceRefreshCover = true;
+        await loadCoverImage();
+        showToast(`'${group.seriesTitle}' 작품 표지를 새로고침했습니다.`);
+      });
       coverWrapper.appendChild(refreshCoverBtn);
     }
 
@@ -874,6 +770,17 @@ function renderEpisodeList(selectedSeriesTitle = null) {
     count.textContent = `총 ${group.chapters.length}개 회차`;
 
     infoTextWrapper.append(title, count);
+
+    coverWrapper.style.cursor = 'pointer';
+    coverWrapper.addEventListener('click', () => {
+      renderEpisodeList(group.seriesTitle);
+    });
+
+    infoTextWrapper.style.cursor = 'pointer';
+    infoTextWrapper.addEventListener('click', () => {
+      renderEpisodeList(group.seriesTitle);
+    });
+
     info.append(infoTextWrapper);
 
     // 편집 모드(isShelfEditMode)일 때만 서재 카드에 🗑️ 삭제 버튼 표시!
@@ -883,88 +790,42 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       deleteBtn.className = 'shelf-card-delete-action';
       deleteBtn.title = '서재에서 삭제';
       deleteBtn.innerHTML = '🗑️ 삭제';
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        // 1. 0초 동기 DOM 삭제
+        card.remove();
+
+        const deleteIds = new Set(group.chapters.map((c) => c.id));
+        // 2. 메모리 목록 동기 말소
+        state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
+        saveRecentChapters(state.chapters);
+
+        // 3. 백그라운드 DB 삭제 및 용량 표시 갱신
+        (async () => {
+          for (const id of deleteIds) {
+            state.saved.delete(id);
+            await library.deleteChapter(id).catch(() => {});
+          }
+          renderLibraryBar();
+        })();
+
+        // 서재 목록 UI 즉시 전체 동기 갱신!
+        renderEpisodeList();
+      });
+
       info.append(deleteBtn);
     }
 
     card.append(coverWrapper, info);
-    elements.push(card);
-  }
 
-  if (elements.length === 0) {
-    const emptyNotice = document.createElement('div');
-    emptyNotice.className = 'shelf-empty-notice';
-    emptyNotice.style.padding = '40px 20px';
-    emptyNotice.style.textAlign = 'center';
-    emptyNotice.style.color = 'var(--text-dim)';
-    emptyNotice.style.gridColumn = '1 / -1';
-    emptyNotice.innerHTML = `
-      <div style="font-size: 32px; margin-bottom: 8px;">${state.currentShelfTab === 'anime' ? '🎬' : '📚'}</div>
-      <p style="font-size: 15px; margin-bottom: 4px;">${state.currentShelfTab === 'anime' ? '담긴 애니메이션이 없습니다.' : '담긴 만화가 없습니다.'}</p>
-      <span style="font-size: 12px;">상단 '불러오기' 버튼으로 주소를 붙여넣으면 서재에 자동 추가됩니다.</span>
-    `;
-    elements.push(emptyNotice);
+    elements.push(card);
   }
 
   el.epList.className = 'ep-list ebook-shelf';
   el.epList.replaceChildren(...elements);
-
-  // 고성능 단일 이벤트 위임 (Event Delegation) — 메모리 누수 0% 달성
-  if (!el.epList.hasAttribute('data-delegated')) {
-    el.epList.setAttribute('data-delegated', 'true');
-    el.epList.addEventListener('click', async (e) => {
-      const deleteBtn = e.target.closest('.shelf-card-delete-action');
-      if (deleteBtn) {
-        e.stopPropagation();
-        e.preventDefault();
-        const card = deleteBtn.closest('.shelf-card');
-        const seriesTitle = card?.dataset.seriesTitle;
-        if (!seriesTitle) return;
-
-        card.remove();
-
-        const currentGroups = groupChaptersBySeries(state.chapters);
-        const group = currentGroups.find((g) => g.seriesTitle === seriesTitle);
-        if (group) {
-          const deleteIds = new Set(group.chapters.map((c) => c.id));
-          state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
-          saveRecentChapters(state.chapters);
-
-          try {
-            for (const id of deleteIds) {
-              state.saved.delete(id);
-              await library.deleteChapter(id).catch(() => {});
-            }
-          } finally {
-            renderLibraryBar();
-            renderEpisodeList();
-          }
-        }
-        return;
-      }
-
-      const refreshBtn = e.target.closest('.shelf-refresh-btn');
-      if (refreshBtn) {
-        e.stopPropagation();
-        e.preventDefault();
-        const card = refreshBtn.closest('.shelf-card');
-        const seriesTitle = card?.dataset.seriesTitle;
-        const currentGroups = groupChaptersBySeries(state.chapters);
-        const group = currentGroups.find((g) => g.seriesTitle === seriesTitle);
-        if (group) {
-          group.forceRefreshCover = true;
-          if (group.loadCoverImageFn) await group.loadCoverImageFn();
-          showToast(`'${seriesTitle}' 작품 표지를 새로고침했습니다.`);
-        }
-        return;
-      }
-
-      const card = e.target.closest('.shelf-card');
-      if (card) {
-        const seriesTitle = card.dataset.seriesTitle;
-        if (seriesTitle) renderEpisodeList(seriesTitle);
-      }
-    });
-  }
 }
 
 /** 선택한 시리즈의 회차 텍스트 목록 전용 뷰 렌더링 */
@@ -1190,14 +1051,7 @@ async function submitImport() {
     return;
   }
 
-  // 애니라이프(anilife.app) 애니메이션 주소 감지 시 전용 비디오 플레이어 연동
-  if (isAnilifeUrl(raw)) {
-    el.rawInput.value = '';
-    closeModal(el.modalImport);
-    showToast('애니라이프 애니메이션을 불러옵니다...');
-    fetchAnilifeEpisodeAndPlay(raw);
-    return;
-  }
+  // 페이지 주소 하나 → 서버가 HTML 받아 컷을 찾아온다 (북마클릿 불필요)
   if (looksLikeSinglePageUrl(raw)) {
     try {
       setBusy(true, '페이지에서 만화 찾는 중…');
