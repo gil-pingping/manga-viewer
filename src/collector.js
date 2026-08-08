@@ -34,6 +34,8 @@ const BUNDLED = [
   ['inheritedPageIndex', dom.inheritedPageIndex], // collectDescriptors 가 쓴다
   ['toDescriptor', dom.toDescriptor],
   ['collectDescriptors', dom.collectDescriptors],
+  ['extractSeriesCover', dom.extractSeriesCover],
+  ['findSeriesListUrl', dom.findSeriesListUrl],
 ];
 
 /** 번들러가 함수 이름을 바꿔도 페이지에서 쓸 이름은 고정한다. */
@@ -120,6 +122,7 @@ function runCollector(viewerOrigin) {
 
     var payload = {
       title: (document.title || '수집한 이미지').split(/[|>]/)[0].trim(),
+      coverUrl: extractSeriesCover(document, location.href),
       sourceUrl: location.href,
       prevUrl: findLink(/이전화|이전\s*화|prev/i),
       nextUrl: findLink(/다음화|다음\s*화|next/i),
@@ -194,6 +197,7 @@ function collectForNative() {
   var pages = selectContentImages(collectDescriptors(document), location.href);
   return JSON.stringify({
     title: (document.title || '수집한 이미지').split(/[|>]/)[0].trim(),
+    coverUrl: extractSeriesCover(document, location.href),
     sourceUrl: location.href,
     prevUrl: findLink(/이전화|이전\s*화|prev/i),
     nextUrl: findLink(/다음화|다음\s*화|next/i),

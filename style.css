@@ -1442,20 +1442,280 @@ select.field {
 }
 
 /* OTA 무선 업데이트 버전 태그 */
-.ota-tag {
+/* ==========================================================================
+   E-Book 책장 서재 Grid Style
+   ========================================================================== */
+
+.sheet-lg {
+  max-width: 860px;
+}
+
+.ebook-shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 18px;
+  padding: 8px 4px;
+}
+
+.shelf-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  cursor: pointer;
+  position: relative;
+}
+
+.shelf-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--accent);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+.shelf-cover-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.shelf-cover {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 2;
+  transition: transform 0.25s ease;
+}
+
+.shelf-card:hover .shelf-cover {
+  transform: scale(1.04);
+}
+
+.shelf-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
+  background: linear-gradient(145deg, #1f2430 0%, #0f1219 100%);
+  border-bottom: 1px solid var(--line);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.4);
+}
+
+.shelf-placeholder-title {
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.4;
+  word-break: keep-all;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+.shelf-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  background: rgba(12, 14, 18, 0.85);
+  backdrop-filter: blur(4px);
+  color: var(--accent);
+  border: 1px solid var(--accent-soft);
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.shelf-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(15, 18, 25, 0.75);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ff5555;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.shelf-delete-btn:hover,
+.shelf-delete-btn:active {
+  background: #e53935;
+  color: #ffffff;
+  transform: scale(1.12);
+}
+
+.shelf-info {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shelf-info-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.shelf-card-delete-action {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  background: rgba(229, 57, 53, 0.18);
+  border: 1px solid rgba(229, 57, 53, 0.45);
+  color: #ff6b6b;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.shelf-card-delete-action:hover,
+.shelf-card-delete-action:active {
+  background: #e53935;
+  color: #ffffff;
+  border-color: #e53935;
+  transform: scale(1.05);
+}
+
+.shelf-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shelf-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 시리즈 클릭 시 회차 목록 뷰 */
+.shelf-episodes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  grid-column: 1 / -1;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  padding: 16px;
+  animation: fade-in 0.16s ease;
+}
+
+.shelf-episodes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.shelf-back-btn {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #000;
-  font-size: 11px;
-  font-weight: 800;
-  font-family: monospace;
-  letter-spacing: 0.3px;
-  box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
 }
-    min-width: 64px;
-    font-size: 11.5px;
-  }
+
+.shelf-back-btn:hover {
+  background: var(--surface-1);
 }
+
+.shelf-ep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shelf-ep-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.shelf-ep-item:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.shelf-ep-item.is-current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shelf-ep-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.shelf-ep-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.shelf-refresh-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(18, 20, 26, 0.85);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.shelf-refresh-btn:hover {
+  background: var(--surface-1);
+  transform: scale(1.1);
+}
+

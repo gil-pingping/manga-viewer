@@ -5,8 +5,8 @@
   "loggingBehavior": "production",
   "backgroundColor": "#0b0c0e",
   "android": {
-    "allowMixedContent": false,
-    "webContentsDebuggingEnabled": false
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": true
   },
   "plugins": {
     "LiveUpdate": {

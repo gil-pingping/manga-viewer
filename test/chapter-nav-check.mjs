@@ -221,4 +221,27 @@ check('사이트 주소가 있으면 그걸로 간다 (데모 아님)', () => {
   });
 });
 
+check('표지 주소는 챕터에 남고, 나중에 빈 값이 와도 지워지지 않는다', () => {
+  const first = upsertChapter(
+    [],
+    {
+      title: '헬 로그인 1화',
+      targetUrl: 'https://comic.test/1',
+      coverUrl: 'https://cdn.test/cover.jpg',
+      pages: [1],
+    },
+    'import-1'
+  );
+  assert.equal(first.chapter.coverUrl, 'https://cdn.test/cover.jpg');
+
+  // 같은 화를 다시 수집했는데 그 페이지엔 표지가 없었다 — 이미 찾은 걸 버리면 안 된다
+  const again = upsertChapter(
+    first.chapters,
+    { title: '헬 로그인 1화', targetUrl: 'https://comic.test/1', pages: [1, 2] },
+    'import-2'
+  );
+  assert.equal(again.chapter.coverUrl, 'https://cdn.test/cover.jpg');
+  assert.equal(again.isNew, false);
+});
+
 console.log(`\n${passed}개 통과`);

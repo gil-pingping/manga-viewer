@@ -109,6 +109,22 @@ export async function resolveOffline(chapter) {
   return rows.map((r) => URL.createObjectURL(r.blob));
 }
 
+/**
+ * 담아둔 컷 한 장만 꺼낸다 (키는 page.url).
+ * 책장 표지는 한 장이면 되므로 챕터 전체를 여는 resolveOffline 을 쓰지 않는다.
+ */
+export async function pageBlobUrl(key) {
+  if (!key) return null;
+  try {
+    const row = await run([PAGES], 'readonly', (tx) =>
+      reqToPromise(tx.objectStore(PAGES).get(key))
+    );
+    return row?.blob ? URL.createObjectURL(row.blob) : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ==================================================================== */
 /* 쓰기                                                                  */
 /* ==================================================================== */
@@ -254,6 +270,7 @@ export async function saveRecentChaptersToDb(chapters) {
         title: c.title,
         label: c.label,
         pages: c.pages,
+        coverUrl: c.coverUrl || null,
         sourceUrl: c.sourceUrl || null,
         prevUrl: c.prevUrl || null,
         nextUrl: c.nextUrl || null,

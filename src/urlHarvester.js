@@ -5,7 +5,7 @@ import {
   NOT_IMAGE_EXT,
   JUNK_PATTERN,
 } from './core/imageRules.js';
-import { collectDescriptors, looksJsRendered } from './collect/fromDocument.js';
+import { collectDescriptors, looksJsRendered, extractSeriesCover, findSeriesListUrl } from './collect/fromDocument.js';
 import { fetchPageDocument, isNativeApp } from './platform/nativeHttp.js';
 import { collectRenderedPage } from './platform/pageCollector.js';
 
@@ -69,6 +69,7 @@ export class UrlHarvester {
 
     return {
       title: payload.title || '수집한 만화',
+      coverUrl: payload.coverUrl || null,
       targetUrl: payload.sourceUrl || null,
       prevUrl: payload.prevUrl || null,
       nextUrl: payload.nextUrl || null,
@@ -151,8 +152,26 @@ export class UrlHarvester {
       throw err;
     }
 
+    let seriesCover = extractSeriesCover(doc, targetUrl);
+    if (!seriesCover) {
+      const listUrl = findSeriesListUrl(doc, targetUrl);
+      if (listUrl) {
+        try {
+          const listRes = await fetchPageDocument(listUrl);
+          if (listRes.ok) {
+            const listHtml = await listRes.text();
+            const listDoc = new DOMParser().parseFromString(listHtml, 'text/html');
+            seriesCover = extractSeriesCover(listDoc, listUrl);
+          }
+        } catch (e) {
+          console.warn('메인 목록 페이지 표지 추출 중 오류:', e);
+        }
+      }
+    }
+
     return {
       title: cleanTitle(doc.title),
+      coverUrl: seriesCover,
       targetUrl,
       prevUrl:
         findAdjacentLink(doc, /이전화|이전\s*화|prev/i, parsedUrl.origin, targetUrl) ||
@@ -229,6 +248,7 @@ export class UrlHarvester {
     const sourceUrl = body.sourceUrl || targetUrl;
     return {
       title: body.title || '불러온 만화',
+      coverUrl: body.coverUrl || null,
       targetUrl: sourceUrl,
       prevUrl: body.prevUrl || bumpEpisodeParam(sourceUrl, -1),
       nextUrl: body.nextUrl || bumpEpisodeParam(sourceUrl, +1),

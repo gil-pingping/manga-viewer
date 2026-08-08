@@ -10,14 +10,19 @@ import {
   findAdjacentPrefetch,
   upsertChapter,
 } from './src/core/chapterNav.js';
+import { groupChaptersBySeries, parseSeriesAndEpisode } from './src/core/series.js';
+import { updateChapterDomain } from './src/core/linkManager.js';
+import { preloadChapterImages } from './src/core/cacheManager.js';
 import * as library from './src/library.js';
-import { isNativeApp, resolvePageImageUrl } from './src/platform/nativeHttp.js';
+import { isNativeApp, resolvePageImageUrl, fetchPageImage } from './src/platform/nativeHttp.js';
 import {
   confirmBundleReady,
   finishStartupAndApplyUpdate,
   getCurrentBundleId,
 } from './src/platform/liveUpdate.js';
 import { APP_VERSION, BUILD_TIME } from './src/version.js';
+import { ONE_PIECE_COVER_DATA } from './src/sampleCoverData.js';
+import { SAMPLE_MANGA_SERIES } from './src/sampleData.js';
 import {
   createInitialState,
   saveSettings as persistSettings,
@@ -95,9 +100,15 @@ const el = {
   modalEpisodes: $('modal-episodes'),
   modalDisplay: $('modal-display'),
   modalSettings: $('modal-settings'),
+  modalLinkManage: $('modal-link-manage'),
 
   epList: $('episode-list'),
+  btnShelfEdit: $('btn-shelf-edit'),
   libUsage: $('lib-usage'),
+  btnManageLinks: $('btn-manage-links'),
+  btnApplyLinkFix: $('btn-apply-link-fix'),
+  oldDomainInput: $('old-domain-input'),
+  newDomainInput: $('new-domain-input'),
   btnSave1: $('btn-save-1'),
   btnSave10: $('btn-save-10'),
   rawInput: $('raw-input'),
@@ -242,6 +253,7 @@ async function openChapter(chapterId, pageNumber) {
 
   const startAt = pageNumber ?? readProgress()[chapter.id] ?? 1;
   engine.loadChapter(forEngine, startAt);
+  preloadChapterImages(forEngine);
   prefetchNextChapter(chapter);
 }
 
@@ -467,13 +479,11 @@ function initEngine() {
     },
 
     onEpisodeEnd: () => {
-      const next = state.chapters[currentIndex() + 1];
-      const canAutoAdvance = (next && !next.isDemo) || currentChapter()?.nextUrl;
-
-      if (canAutoAdvance) {
-        showAutoNextCard();
+      if (hasAdjacent(1)) {
+        toast('다음 화로 이동합니다…');
+        goChapter(1);
       } else {
-        toast('마지막 페이지입니다.');
+        toast('마지막 화입니다.');
       }
     },
   });
@@ -583,83 +593,319 @@ function seriesNameFromTitle(title) {
   return cleaned || title;
 }
 
-function renderEpisodeList() {
+function renderEpisodeList(selectedSeriesTitle = null) {
   renderLibraryBar();
 
-  // 시리즈 키로 챕터 그룹화
-  const groups = new Map(); // key → { name, chapters[] }
-  const groupOrder = [];    // 순서 보존
-
-  for (const chapter of state.chapters) {
-    let key;
-    let seriesName;
-
-    if (chapter.isDemo) {
-      key = '__demo__';
-      seriesName = '데모';
-    } else {
-      const urlKey = seriesKeyFromUrl(chapter.sourceUrl);
-      if (urlKey) {
-        key = urlKey;
-        seriesName = seriesNameFromTitle(chapter.title);
-      } else {
-        // sourceUrl이 없는 경우 (파일, 붙여넣기) — 제목 기반 그룹화
-        key = `__local__${seriesNameFromTitle(chapter.title)}`;
-        seriesName = seriesNameFromTitle(chapter.title);
-      }
-    }
-
-    if (!groups.has(key)) {
-      const group = { name: seriesName, chapters: [] };
-      groups.set(key, group);
-      groupOrder.push(key);
-    }
-    groups.get(key).chapters.push(chapter);
+  if (el.btnShelfEdit) {
+    el.btnShelfEdit.textContent = state.isShelfEditMode ? '✅ 편집 완료' : '✏️ 서재 편집';
+    el.btnShelfEdit.className = state.isShelfEditMode ? 'btn btn-sm btn-primary' : 'btn btn-sm';
+    el.btnShelfEdit.onclick = () => {
+      state.isShelfEditMode = !state.isShelfEditMode;
+      renderEpisodeList();
+    };
   }
 
+  const seriesGroups = groupChaptersBySeries(state.chapters);
+
+  // 특정 시리즈가 선택되었을 때는 회차 텍스트 목록 뷰 렌더링
+  if (selectedSeriesTitle) {
+    const targetGroup = seriesGroups.find((g) => g.seriesTitle === selectedSeriesTitle);
+    if (targetGroup) {
+      renderSeriesChaptersView(targetGroup);
+      return;
+    }
+  }
+
+  // 기본 상태: E-Book 책장 그리드 렌더링
   const elements = [];
 
-  for (const key of groupOrder) {
-    const group = groups.get(key);
-    const isSingleItem = group.chapters.length === 1;
+  for (const group of seriesGroups) {
+    const card = document.createElement('div');
+    card.className = 'shelf-card';
 
-    // 1화짜리 그룹은 그룹 감싸기 없이 바로 표시
-    if (isSingleItem) {
-      elements.push(buildEpisodeItem(group.chapters[0]));
-      continue;
+    const coverWrapper = document.createElement('div');
+    coverWrapper.className = 'shelf-cover-wrapper';
+
+    /**
+     * 표지 한 장을 건다. 순서가 곧 우선순위다.
+     *   1) 시리즈 대표 표지  2) 서재에 담아둔 첫 컷(네트워크 없어도 보인다)
+     *   3) 원본 페이지를 다시 열어 표지 재추출
+     */
+    const loadCoverImage = async () => {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'shelf-cover-placeholder';
+      placeholder.innerHTML = `<span class="shelf-placeholder-title">${group.seriesTitle}</span>`;
+      coverWrapper.appendChild(placeholder);
+
+      const referer = group.chapters.find((c) => c.sourceUrl)?.sourceUrl || '';
+      let srcUrl = null;
+      let ownedBlob = false;
+
+      /** 원본 주소를 리더가 쓰는 page 객체 모양으로 맞춘다 */
+      const asPage = (raw) => {
+        if (!raw) return null;
+        const normalized = raw.startsWith('./') ? raw.slice(1) : raw;
+        return { url: normalized, originalUrl: raw, refererUrl: referer };
+      };
+
+      const tryLoad = async (raw) => {
+        if (!raw) return false;
+        // 1. 로컬 정적 파일 주소면 바로 지정
+        if (/^(blob:|data:|\.\/|\/|[a-zA-Z0-9_\-]+\.(jpg|png|webp|svg))/i.test(raw)) {
+          srcUrl = raw.startsWith('./') ? raw.slice(2) : raw;
+          ownedBlob = false;
+          return true;
+        }
+
+        const page = { url: raw, originalUrl: raw, refererUrl: referer || 'https://newtoki1.org/' };
+        try {
+          // Native App / Web 공통으로 이미지 바이트를 Blob으로 로드하여 403 차단 우회
+          const response = await fetchPageImage(page).catch(() => null);
+          if (response?.ok && response?.blob) {
+            srcUrl = URL.createObjectURL(response.blob);
+            ownedBlob = true;
+          } else {
+            srcUrl = raw;
+            ownedBlob = false;
+          }
+        } catch (err) {
+          srcUrl = raw;
+          ownedBlob = false;
+        }
+        return Boolean(srcUrl);
+      };
+
+      // 1. 작품 목록 페이지에서 수집된 시리즈 원본 대표 표지(group.coverUrl 및 group.coverPage) 1순위 적용
+      await tryLoad(group.coverUrl || group.coverPage?.originalUrl || group.coverPage?.url);
+
+      // 원피스 샘플 카드이고 온라인 표지 로드가 실패했을 때만 인라인 딜리버리
+      if (!srcUrl && /원피스|one\s*piece/i.test(group.seriesTitle)) {
+        srcUrl = ONE_PIECE_COVER_DATA;
+      }
+
+      // 2. 서재에 담아둔 챕터면 저장된 바이트로 — 네트워크가 없어도 책장이 채워진다
+      if (!srcUrl) {
+        const savedKey = group.chapters.find((c) => c.pages?.[0]?.url)?.pages[0].url;
+        const blobUrl = await library.pageBlobUrl(savedKey);
+        if (blobUrl) {
+          srcUrl = blobUrl;
+          ownedBlob = true;
+        }
+      }
+
+      // 3. 표지가 아예 없고 사용자가 수동 새로고침을 요구했을 때만 원본 페이지 재추출
+      if (!srcUrl && referer && group.forceRefreshCover) {
+        try {
+          const fetched = await UrlHarvester.fetchFromUrl(referer, { silentRenderedFallback: true });
+          if (fetched?.coverUrl) {
+            group.coverUrl = fetched.coverUrl;
+            const ids = new Set(group.chapters.map((c) => c.id));
+            for (const chapter of state.chapters) {
+              if (ids.has(chapter.id)) chapter.coverUrl = fetched.coverUrl;
+            }
+            saveRecentChapters(state.chapters);
+            await tryLoad(fetched.coverUrl);
+          }
+        } catch (err) {
+          console.warn('온라인 표지 자동 추출 복구 실패:', err);
+        }
+      }
+
+      if (!srcUrl) return;
+
+      const img = document.createElement('img');
+      img.className = 'shelf-cover';
+      img.alt = group.seriesTitle;
+      img.onload = () => {
+        if (placeholder && placeholder.parentNode) {
+          placeholder.remove();
+        }
+      };
+      img.onerror = () => {
+        console.warn('표지 로딩 최종 실패:', srcUrl);
+        if (ownedBlob && srcUrl.startsWith('blob:')) URL.revokeObjectURL(srcUrl);
+      };
+      img.src = srcUrl;
+
+      // loading="lazy" 제거 및 즉시 DOM 주입으로 WebView 레이지 로딩 블락 완전 해결
+      coverWrapper.insertBefore(img, coverWrapper.firstChild);
+    };
+
+    loadCoverImage();
+
+    const badge = document.createElement('span');
+    badge.className = 'shelf-badge';
+    badge.textContent = `${group.chapters.length}화`;
+    coverWrapper.appendChild(badge);
+
+    // 편집 모드일 때만 표지 수동 새로고침(🔄) 버튼 노출
+    if (state.isShelfEditMode && referer) {
+      const refreshCoverBtn = document.createElement('button');
+      refreshCoverBtn.type = 'button';
+      refreshCoverBtn.className = 'shelf-refresh-btn';
+      refreshCoverBtn.title = '작품 표지 새로고침';
+      refreshCoverBtn.innerHTML = '🔄';
+      refreshCoverBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        group.forceRefreshCover = true;
+        await loadCoverImage();
+        showToast(`'${group.seriesTitle}' 작품 표지를 새로고침했습니다.`);
+      });
+      coverWrapper.appendChild(refreshCoverBtn);
     }
 
-    // 여러 화 묶음: 접기/펼치기 그룹
-    const wrapper = document.createElement('div');
-    wrapper.className = 'ep-group';
+    const info = document.createElement('div');
+    info.className = 'shelf-info';
 
-    // 현재 읽고 있는 화가 이 그룹에 있으면 펼쳐둔다
-    const hasCurrentChapter = group.chapters.some((c) => c.id === state.currentId);
-    if (!hasCurrentChapter) wrapper.classList.add('is-collapsed');
+    const infoTextWrapper = document.createElement('div');
+    infoTextWrapper.className = 'shelf-info-text';
 
-    const header = document.createElement('button');
-    header.type = 'button';
-    header.className = 'ep-group-header';
-    header.innerHTML = `
-      <span class="group-title">${group.name}</span>
-      <span class="group-count">${group.chapters.length}화</span>
-      <svg class="group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-    `;
-    header.addEventListener('click', () => {
-      wrapper.classList.toggle('is-collapsed');
+    const title = document.createElement('span');
+    title.className = 'shelf-title';
+    title.textContent = group.seriesTitle;
+
+    const count = document.createElement('span');
+    count.className = 'shelf-count';
+    count.textContent = `총 ${group.chapters.length}개 회차`;
+
+    infoTextWrapper.append(title, count);
+
+    coverWrapper.style.cursor = 'pointer';
+    coverWrapper.addEventListener('click', () => {
+      renderEpisodeList(group.seriesTitle);
     });
 
-    const body = document.createElement('div');
-    body.className = 'ep-group-body';
-    for (const chapter of group.chapters) {
-      body.appendChild(buildEpisodeItem(chapter));
+    infoTextWrapper.style.cursor = 'pointer';
+    infoTextWrapper.addEventListener('click', () => {
+      renderEpisodeList(group.seriesTitle);
+    });
+
+    info.append(infoTextWrapper);
+
+    // 편집 모드(isShelfEditMode)일 때만 서재 카드에 🗑️ 삭제 버튼 표시!
+    if (state.isShelfEditMode) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'shelf-card-delete-action';
+      deleteBtn.title = '서재에서 삭제';
+      deleteBtn.innerHTML = '🗑️ 삭제';
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        // 1. 0초 동기 DOM 삭제
+        card.remove();
+
+        const deleteIds = new Set(group.chapters.map((c) => c.id));
+        // 2. 메모리 목록 동기 말소
+        state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
+        saveRecentChapters(state.chapters);
+
+        // 3. 백그라운드 DB 삭제 및 용량 표시 갱신
+        (async () => {
+          for (const id of deleteIds) {
+            state.saved.delete(id);
+            await library.deleteChapter(id).catch(() => {});
+          }
+          renderLibraryBar();
+        })();
+
+        // 서재 목록 UI 즉시 전체 동기 갱신!
+        renderEpisodeList();
+      });
+
+      info.append(deleteBtn);
     }
 
-    wrapper.append(header, body);
-    elements.push(wrapper);
+    card.append(coverWrapper, info);
+
+    elements.push(card);
   }
 
+  el.epList.className = 'ep-list ebook-shelf';
   el.epList.replaceChildren(...elements);
+}
+
+/** 선택한 시리즈의 회차 텍스트 목록 전용 뷰 렌더링 */
+function renderSeriesChaptersView(group) {
+  const container = document.createElement('div');
+  container.className = 'shelf-episodes-view';
+
+  const header = document.createElement('div');
+  header.className = 'shelf-episodes-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.type = 'button';
+  backBtn.className = 'shelf-back-btn';
+  backBtn.innerHTML = `← 책장으로`;
+  backBtn.addEventListener('click', () => {
+    renderEpisodeList();
+  });
+
+  const title = document.createElement('h3');
+  title.style.margin = '0';
+  title.style.fontSize = '15px';
+  title.style.fontWeight = '700';
+  title.textContent = `${group.seriesTitle} (${group.chapters.length}화)`;
+
+  header.append(backBtn, title);
+
+  const list = document.createElement('div');
+  list.className = 'shelf-ep-list';
+
+  for (const chapter of group.chapters) {
+    const isCurrent = chapter.id === state.currentId;
+    const readTo = readProgress()[chapter.id];
+    const savedRow = state.saved.get(chapter.id);
+
+    const item = document.createElement('div');
+    item.className = `shelf-ep-item${isCurrent ? ' is-current' : ''}`;
+
+    const info = document.createElement('div');
+    const epTitle = document.createElement('span');
+    epTitle.className = 'shelf-ep-title';
+    epTitle.textContent = chapter.parsedEpisodeLabel || chapter.title || '회차';
+
+    const epMeta = document.createElement('span');
+    epMeta.className = 'shelf-ep-meta';
+    epMeta.textContent = `${chapter.pages.length}장` + (readTo ? ` · ${readTo}쪽 읽음` : '') + (savedRow ? ` · 담김` : '');
+
+    info.append(epTitle, epMeta);
+
+    item.append(info);
+
+    if (savedRow) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'ep-del';
+      delBtn.style.height = '100%';
+      delBtn.style.padding = '0 12px';
+      delBtn.style.borderRadius = 'var(--r-sm)';
+      delBtn.textContent = '✕';
+      delBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await library.deleteChapter(chapter.id);
+        await refreshSaved();
+        renderEpisodeList(group.seriesTitle);
+        toast('서재에서 지웠습니다.');
+      });
+      item.append(delBtn);
+    }
+
+    item.addEventListener('click', () => {
+      openChapter(chapter.id);
+      closeModal(el.modalEpisodes);
+    });
+
+    list.appendChild(item);
+  }
+
+  container.append(header, list);
+
+  el.epList.className = 'ep-list';
+  el.epList.replaceChildren(container);
 }
 
 function buildEpisodeItem(chapter) {
@@ -1043,9 +1289,30 @@ function wireEvents() {
   document.getElementById('empty-files').addEventListener('click', () => openModal(el.modalFiles));
   document.getElementById('empty-import').addEventListener('click', () => openModal(el.modalImport));
 
-  /* 서재에 담기 */
+  /* 서재에 담기 & 링크 정리 */
   el.btnSave1.addEventListener('click', () => batchSave(1));
   el.btnSave10.addEventListener('click', () => batchSave(10));
+
+  el.btnManageLinks.addEventListener('click', () => {
+    closeModal(el.modalEpisodes);
+    openModal(el.modalLinkManage);
+  });
+
+  el.btnApplyLinkFix.addEventListener('click', () => {
+    const oldDomain = el.oldDomainInput.value.trim();
+    const newDomain = el.newDomainInput.value.trim();
+
+    if (!oldDomain || !newDomain) {
+      toast('기존 도메인과 새 도메인을 모두 입력해 주세요.', { error: true });
+      return;
+    }
+
+    state.chapters = updateChapterDomain(state.chapters, oldDomain, newDomain);
+    saveRecentChapters(state.chapters);
+    toast('주소를 성공적으로 일괄 업데이트하였습니다.');
+    closeModal(el.modalLinkManage);
+    renderEpisodeList();
+  });
 
   /* 불러오기 */
   el.btnSubmitUrl.addEventListener('click', submitImport);
@@ -1333,42 +1600,56 @@ async function bootApp() {
   applySettingsToUI();
   wireEvents();
 
-  // 인증이 제일 먼저다. 서재 복원이나 수집이 먼저 돌면 401 을 맞는다
-  await consumeAuthToken();
+  try {
+    await consumeAuthToken();
+  } catch (err) {
+    console.warn('[부팅] consumeAuthToken 실패:', err);
+  }
 
-  // 브라우저가 공간이 부족할 때 서재를 조용히 비우지 않도록 미리 부탁한다
   library.requestPersistence().catch(() => {});
   registerServiceWorker();
-  await loadLibraryIntoList();
 
-  // 뷰어 탭이 이미 열려 있는 상태로 #import= 만 바뀌면 스크립트가 다시 돌지 않는다.
-  // (같은 문서 내 프래그먼트 이동) 그래서 hashchange 로도 한 번 더 받는다.
+  try {
+    await loadLibraryIntoList();
+  } catch (err) {
+    console.warn('[부팅] loadLibraryIntoList 실패:', err);
+  }
+
   window.addEventListener('hashchange', () => {
     if (/[#&]import=/.test(window.location.hash)) consumePendingImport();
   });
 
-  // 북마클릿으로 넘어온 게 있으면 그것을 열고, 없으면 마지막으로 읽던 화나 저장된 화를 연다.
-  const imported = await consumePendingImport();
+  const imported = await consumePendingImport().catch(() => null);
 
-  if (!imported) {
+    const hasInitialized = localStorage.getItem('mangaViewer.hasInitialized');
+    if (!imported && !hasInitialized && state.chapters.length === 0) {
+      localStorage.setItem('mangaViewer.hasInitialized', 'true');
+      const onepiece = SAMPLE_MANGA_SERIES.episodes.find((e) => e.id === 'sample-onepiece-909');
+      if (onepiece) {
+        state.chapters = [onepiece];
+        saveRecentChapters(state.chapters);
+      }
+    } else {
+      localStorage.setItem('mangaViewer.hasInitialized', 'true');
+    }
+
     const lastId = readLastChapterId();
     const targetChapter =
       state.chapters.find((c) => c.id === lastId) ||
       state.chapters.find((c) => state.saved.has(c.id)) ||
-      state.chapters.find((c) => !c.isDemo);
+      state.chapters[0];
 
     if (targetChapter) {
-      await openChapter(targetChapter.id);
-      // 복원된 목록이 있으면 첫 화면에서 화수 목록을 바로 보여준다
-      const hasRealChapters = state.chapters.some((c) => !c.isDemo);
-      if (hasRealChapters) {
-        renderEpisodeList();
-        openModal(el.modalEpisodes);
+      try {
+        await openChapter(targetChapter.id);
+      } catch (e) {
+        console.warn('openChapter 초기 실행 오류:', e);
       }
+      renderEpisodeList();
+      openModal(el.modalEpisodes);
     } else {
       showEmptyState();
     }
-  }
 
   showChrome();
 

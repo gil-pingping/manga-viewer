@@ -90,6 +90,8 @@ export function upsertChapter(chapters, harvested, id) {
 
   chapter.title = harvested.title || '불러온 만화';
   chapter.pages = harvested.pages;
+  // 표지는 회차 페이지에 없을 때가 있다. 한 번 찾은 값은 덮어쓰지 않고 남긴다
+  chapter.coverUrl = harvested.coverUrl || chapter.coverUrl || null;
   chapter.sourceUrl = harvested.targetUrl || null;
   chapter.prevUrl = harvested.prevUrl || null;
   chapter.nextUrl = harvested.nextUrl || null;

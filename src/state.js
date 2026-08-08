@@ -103,7 +103,8 @@ export function saveLastChapterId(id) {
 export function readRecentChapters() {
   try {
     const raw = localStorage.getItem(RECENT_CHAPTERS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return parsed.filter((c) => !c.isDemo && !c.id?.startsWith('demo-'));
   } catch {
     return [];
   }
@@ -113,13 +114,14 @@ export function saveRecentChapters(chapters) {
   try {
     // 최근 수집 및 열람한 챕터 최대 30개 보관 (데모 제외)
     const filtered = (chapters || [])
-      .filter((c) => !c.isDemo)
+      .filter((c) => !c.isDemo && !c.id?.startsWith('demo-'))
       .slice(0, 30)
       .map((c) => ({
         id: c.id,
         title: c.title,
         label: c.label,
         pages: c.pages,
+        coverUrl: c.coverUrl || null,
         sourceUrl: c.sourceUrl || null,
         prevUrl: c.prevUrl || null,
         nextUrl: c.nextUrl || null,

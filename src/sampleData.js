@@ -64,7 +64,25 @@ function stripEpisode() {
   return { id: 'demo-strip', number: 2, title: '세로 스크롤 웹툰', totalPages: 5, pages };
 }
 
+import { ONE_PIECE_COVER_DATA } from './sampleCoverData.js';
+
+function onepieceEpisode() {
+  const coverUrl = ONE_PIECE_COVER_DATA;
+  const sourceUrl = 'https://newtoki1.org/manhwa/2/44358';
+  return {
+    id: 'sample-onepiece-909',
+    number: 909,
+    title: '원피스(ONE PIECE) 909화',
+    label: '909화',
+    coverUrl,
+    sourceUrl,
+    pages: [
+      { pageNumber: 1, url: coverUrl, originalUrl: coverUrl, refererUrl: sourceUrl }
+    ]
+  };
+}
+
 export const SAMPLE_MANGA_SERIES = {
   title: '뷰어 동작 확인용 샘플',
-  episodes: [pagedEpisode(), stripEpisode()],
+  episodes: [onepieceEpisode(), pagedEpisode(), stripEpisode()],
 };

@@ -226,3 +226,75 @@ export function collectDescriptors(root) {
   }
   return out;
 }
+
+/** 사이트 메인/시리즈 대표 표지 이미지 추출 */
+export function extractSeriesCover(doc, baseUrl) {
+  if (!doc) return null;
+
+  const selectors = [
+    '.view-img img',
+    '.view-content1 img',
+    '.subject-img img',
+    '.poster img',
+    '.manga-cover img',
+    '.series-cover img',
+    '.comic-cover img',
+    '.cover img',
+    '.thumb img',
+    'img[src*="cover"]',
+    'img[src*="thumb"]',
+    'meta[property="og:image"]',
+    'meta[name="twitter:image"]',
+  ];
+
+  for (const selector of selectors) {
+    let el;
+    try {
+      el = doc.querySelector(selector);
+    } catch {
+      continue;
+    }
+    if (el) {
+      let src = el.tagName === 'META' ? el.getAttribute('content') : (el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-original'));
+      if (src && !src.startsWith('data:') && !src.includes('logo') && !src.includes('banner')) {
+        try {
+          return new URL(src, baseUrl || location.href).href;
+        } catch {
+          return src;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/** 회차 페이지에서 해당 작품의 메인 목록 페이지 URL 추출 */
+export function findSeriesListUrl(doc, currentUrl) {
+  if (!doc) return null;
+
+  // 1. ld+json ComicIssue / isPartOf 메타데이터 탐색
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of scripts) {
+    try {
+      const json = JSON.parse(script.textContent || '{}');
+      if (json.isPartOf && json.isPartOf.url) {
+        return new URL(json.isPartOf.url, currentUrl).href;
+      }
+    } catch {}
+  }
+
+  // 2. 목록 이동 버튼 또는 회차 목록 링크 탐색
+  const anchors = doc.querySelectorAll('a[href]');
+  for (const a of anchors) {
+    const text = (a.textContent || '').trim();
+    const href = a.getAttribute('href') || '';
+    if (/목록|회차목록|시리즈|작품/i.test(text) || /\/(manhwa|comic|webtoon)\/\d+$/i.test(href)) {
+      try {
+        return new URL(href, currentUrl).href;
+      } catch {}
+    }
+  }
+
+  return null;
+}

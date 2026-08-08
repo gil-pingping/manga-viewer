@@ -75,8 +75,11 @@ export async function fetchPageDocument(targetUrl) {
 export async function fetchPageImage(page, { signal } = {}) {
   throwIfAborted(signal);
 
-  if (!isNativeApp() || !page?.originalUrl) {
-    const response = await fetch(page.url, { signal });
+  const rawUrl = page?.originalUrl || page?.url;
+  const isDirectHttp = rawUrl && /^https?:\/\//i.test(rawUrl) && !rawUrl.includes('/api/proxy-image');
+
+  if (!isNativeApp() || !isDirectHttp) {
+    const response = await fetch(page?.url || rawUrl, { signal });
     return {
       ok: response.ok,
       status: response.status,
@@ -84,12 +87,13 @@ export async function fetchPageImage(page, { signal } = {}) {
     };
   }
 
-  const target = assertFetchableUrl(page.originalUrl, false);
+  const target = assertFetchableUrl(rawUrl, false);
+  const referer = page?.refererUrl || 'https://newtoki1.org/';
   const response = await nativeGet({
     url: target.href,
     headers: {
-      ...imageRequestHeaders(page.refererUrl, target.origin + '/'),
-      'User-Agent': navigator.userAgent,
+      ...imageRequestHeaders(referer, 'https://newtoki1.org/'),
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
     },
     responseType: 'blob',
   });
@@ -107,8 +111,11 @@ export async function fetchPageImage(page, { signal } = {}) {
 
 /** ReaderEngine이 만든 URL만 ReaderEngine이 revoke한다. */
 export async function resolvePageImageUrl(page) {
-  if (!isNativeApp() || !page?.originalUrl || /^(blob:|data:)/.test(page.url || '')) {
-    return { url: page.url, owned: false };
+  const rawUrl = page?.originalUrl || page?.url;
+  const isDirectHttp = rawUrl && /^https?:\/\//i.test(rawUrl) && !rawUrl.includes('/api/proxy-image');
+
+  if (!isNativeApp() || !isDirectHttp || /^(blob:|data:)/.test(rawUrl || '')) {
+    return { url: page?.url || rawUrl, owned: false };
   }
   const response = await fetchPageImage(page);
   if (!response.ok || !response.blob) {
