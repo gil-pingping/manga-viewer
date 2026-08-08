@@ -571,6 +571,10 @@ function toggleChrome() {
 /* ==================================================================== */
 
 function openModal(modal) {
+  if (!modal) return;
+  if (modal === el.modalEpisodes) {
+    renderEpisodeList();
+  }
   modal.classList.add('is-open');
   showChrome(false);
 }
