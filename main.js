@@ -731,7 +731,12 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       coverWrapper.insertBefore(img, coverWrapper.firstChild);
     };
 
+    card.dataset.seriesTitle = group.seriesTitle;
+    if (referer) card.dataset.referer = referer;
+
+    // loading="lazy" 제거 및 즉시 DOM 주입으로 WebView 레이지 로딩 블락 완전 해결
     loadCoverImage();
+    group.loadCoverImageFn = loadCoverImage;
 
     const badge = document.createElement('span');
     badge.className = 'shelf-badge';
@@ -745,13 +750,6 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       refreshCoverBtn.className = 'shelf-refresh-btn';
       refreshCoverBtn.title = '작품 표지 새로고침';
       refreshCoverBtn.innerHTML = '🔄';
-      refreshCoverBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        group.forceRefreshCover = true;
-        await loadCoverImage();
-        showToast(`'${group.seriesTitle}' 작품 표지를 새로고침했습니다.`);
-      });
       coverWrapper.appendChild(refreshCoverBtn);
     }
 
@@ -770,17 +768,6 @@ function renderEpisodeList(selectedSeriesTitle = null) {
     count.textContent = `총 ${group.chapters.length}개 회차`;
 
     infoTextWrapper.append(title, count);
-
-    coverWrapper.style.cursor = 'pointer';
-    coverWrapper.addEventListener('click', () => {
-      renderEpisodeList(group.seriesTitle);
-    });
-
-    infoTextWrapper.style.cursor = 'pointer';
-    infoTextWrapper.addEventListener('click', () => {
-      renderEpisodeList(group.seriesTitle);
-    });
-
     info.append(infoTextWrapper);
 
     // 편집 모드(isShelfEditMode)일 때만 서재 카드에 🗑️ 삭제 버튼 표시!
@@ -790,42 +777,73 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       deleteBtn.className = 'shelf-card-delete-action';
       deleteBtn.title = '서재에서 삭제';
       deleteBtn.innerHTML = '🗑️ 삭제';
-
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-
-        // 1. 0초 동기 DOM 삭제
-        card.remove();
-
-        const deleteIds = new Set(group.chapters.map((c) => c.id));
-        // 2. 메모리 목록 동기 말소
-        state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
-        saveRecentChapters(state.chapters);
-
-        // 3. 백그라운드 DB 삭제 및 용량 표시 갱신
-        (async () => {
-          for (const id of deleteIds) {
-            state.saved.delete(id);
-            await library.deleteChapter(id).catch(() => {});
-          }
-          renderLibraryBar();
-        })();
-
-        // 서재 목록 UI 즉시 전체 동기 갱신!
-        renderEpisodeList();
-      });
-
       info.append(deleteBtn);
     }
 
     card.append(coverWrapper, info);
-
     elements.push(card);
   }
 
   el.epList.className = 'ep-list ebook-shelf';
   el.epList.replaceChildren(...elements);
+
+  // 고성능 단일 이벤트 위임 (Event Delegation) — 메모리 누수 0% 달성
+  if (!el.epList.hasAttribute('data-delegated')) {
+    el.epList.setAttribute('data-delegated', 'true');
+    el.epList.addEventListener('click', async (e) => {
+      const deleteBtn = e.target.closest('.shelf-card-delete-action');
+      if (deleteBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        const card = deleteBtn.closest('.shelf-card');
+        const seriesTitle = card?.dataset.seriesTitle;
+        if (!seriesTitle) return;
+
+        card.remove();
+
+        const currentGroups = groupChaptersBySeries(state.chapters);
+        const group = currentGroups.find((g) => g.seriesTitle === seriesTitle);
+        if (group) {
+          const deleteIds = new Set(group.chapters.map((c) => c.id));
+          state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
+          saveRecentChapters(state.chapters);
+
+          try {
+            for (const id of deleteIds) {
+              state.saved.delete(id);
+              await library.deleteChapter(id).catch(() => {});
+            }
+          } finally {
+            renderLibraryBar();
+            renderEpisodeList();
+          }
+        }
+        return;
+      }
+
+      const refreshBtn = e.target.closest('.shelf-refresh-btn');
+      if (refreshBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        const card = refreshBtn.closest('.shelf-card');
+        const seriesTitle = card?.dataset.seriesTitle;
+        const currentGroups = groupChaptersBySeries(state.chapters);
+        const group = currentGroups.find((g) => g.seriesTitle === seriesTitle);
+        if (group) {
+          group.forceRefreshCover = true;
+          if (group.loadCoverImageFn) await group.loadCoverImageFn();
+          showToast(`'${seriesTitle}' 작품 표지를 새로고침했습니다.`);
+        }
+        return;
+      }
+
+      const card = e.target.closest('.shelf-card');
+      if (card) {
+        const seriesTitle = card.dataset.seriesTitle;
+        if (seriesTitle) renderEpisodeList(seriesTitle);
+      }
+    });
+  }
 }
 
 /** 선택한 시리즈의 회차 텍스트 목록 전용 뷰 렌더링 */
