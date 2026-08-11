@@ -18,6 +18,15 @@ import {
   pageRequestHeaders,
   upstreamFetch,
 } from './src/shared/proxyRules.js';
+import {
+  ANILIFE_API_ORIGIN,
+  ANILIFE_ORIGIN,
+  anilifeMediaRequestHeaders,
+  anilifeStreamRequestHeaders,
+  assertAnilifeStreamUrl,
+  assertAnilifeWatchId,
+  parseAnilifeBuildVersion,
+} from './src/shared/anilifeRules.js';
 
 /**
  * 가드와 상류 요청은 Cloudflare Worker 와 **같은 파일을 공유한다**
@@ -166,6 +175,66 @@ export default function mangaProxyPlugin() {
    * 띄우는 것이 목표라 `vite preview` 에도 같은 미들웨어가 있어야 가져오기가 된다.
    */
   const mount = (server) => {
+      server.middlewares.use('/api/anilife-media', async (req, res) => {
+        if (handlePreflight(req, res)) return;
+
+        try {
+          const id = new URL(req.url, 'http://localhost').searchParams.get('id');
+          assertAnilifeWatchId(id);
+          const watchUrl = `${ANILIFE_ORIGIN}/watch?id=${id}`;
+          const watch = await upstreamFetch(watchUrl, pageRequestHeaders(`${ANILIFE_ORIGIN}/`));
+          if (!watch.ok) throw new Error(`애니 페이지가 ${watch.status} 응답을 반환했습니다.`);
+
+          const buildVersion = parseAnilifeBuildVersion(await watch.text());
+          const media = await upstreamFetch(
+            `${ANILIFE_API_ORIGIN}/v1/media/${id}`,
+            anilifeMediaRequestHeaders(
+              id,
+              buildVersion,
+              req.headers['user-agent'] || BROWSER_UA
+            )
+          );
+          if (!media.ok) throw new Error(`애니 서버가 ${media.status} 응답을 반환했습니다.`);
+
+          res.writeHead(200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          res.end(await media.text());
+        } catch (error) {
+          sendJson(res, 502, { ok: false, error: error.message });
+        }
+      });
+
+      server.middlewares.use('/api/anilife-stream', async (req, res) => {
+        if (handlePreflight(req, res)) return;
+
+        try {
+          const rawUrl = new URL(req.url, 'http://localhost').searchParams.get('url');
+          const target = assertAnilifeStreamUrl(rawUrl);
+          const response = await upstreamFetch(
+            target.href,
+            anilifeStreamRequestHeaders(
+              req.headers['user-agent'] || BROWSER_UA,
+              req.headers.range || ''
+            )
+          );
+          if (!response.ok) throw new Error(`애니 스트림이 ${response.status} 응답을 반환했습니다.`);
+
+          const bytes = Buffer.from(await response.arrayBuffer());
+          res.writeHead(response.status, {
+            'Content-Type': response.headers.get('content-type') || 'application/octet-stream',
+            'Content-Length': bytes.length,
+            'Cache-Control': 'private, max-age=300',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          res.end(bytes);
+        } catch (error) {
+          sendJson(res, 502, { ok: false, error: error.message });
+        }
+      });
+
       /* ---------------------------------------------------------------- */
       /* 북마클릿 → 뷰어 인수인계                                          */
       /* ---------------------------------------------------------------- */

@@ -1450,6 +1450,18 @@ select.field {
   max-width: 860px;
 }
 
+.shelf-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.shelf-empty-notice {
+  grid-column: 1 / -1;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .ebook-shelf {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -1719,3 +1731,121 @@ select.field {
   transform: scale(1.1);
 }
 
+.anime-player-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: var(--text);
+}
+
+.anime-player-overlay[hidden] {
+  display: none;
+}
+
+.anime-player-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 14px;
+  background: #111318;
+  border-bottom: 1px solid var(--line);
+}
+
+.anime-back-btn {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.anime-player-heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.anime-player-title,
+.anime-player-badge {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.anime-player-title {
+  font-size: 15px;
+}
+
+.anime-player-badge {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.anime-video-container {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+}
+
+.anime-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.anime-player-status {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.75);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.anime-skip-toast {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: var(--accent);
+  color: #08111f;
+  font-weight: 700;
+}
+
+.anime-player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: #111318;
+  border-top: 1px solid var(--line);
+}
+
+.anime-speed-select {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 7px 9px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+@media (max-width: 700px) {
+  .anime-player-controls .btn {
+    padding-inline: 9px;
+    font-size: 11px;
+  }
+}

@@ -180,6 +180,10 @@ export function saveRecentChapters(chapters) {
         sourceUrl: c.sourceUrl || null,
         prevUrl: c.prevUrl || null,
         nextUrl: c.nextUrl || null,
+        kind: c.kind || 'comic',
+        type: c.type || null,
+        episodeNumber: c.episodeNumber || null,
+        episodeTitle: c.episodeTitle || null,
         savedAt: c.savedAt || Date.now(),
       }));
     try {

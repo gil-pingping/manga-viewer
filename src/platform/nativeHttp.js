@@ -5,6 +5,15 @@ import {
   imageRequestHeaders,
   pageRequestHeaders,
 } from '../shared/proxyRules.js';
+import {
+  ANILIFE_API_ORIGIN,
+  ANILIFE_ORIGIN,
+  anilifeMediaRequestHeaders,
+  anilifeStreamRequestHeaders,
+  assertAnilifeStreamUrl,
+  assertAnilifeWatchId,
+  parseAnilifeBuildVersion,
+} from '../shared/anilifeRules.js';
 
 export function isNativeApp() {
   return Capacitor.isNativePlatform();
@@ -69,6 +78,72 @@ export async function fetchPageDocument(targetUrl) {
     status,
     headers: { 'Content-Type': header(response.headers, 'content-type') || 'text/html' },
   });
+}
+
+export async function fetchAnilifeMediaEnvelope(id) {
+  assertAnilifeWatchId(id);
+  if (!isNativeApp()) {
+    return fetch(`/api/anilife-media?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+  }
+
+  const watchUrl = `${ANILIFE_ORIGIN}/watch?id=${id}`;
+  const watch = await fetchPageDocument(watchUrl);
+  if (!watch.ok) throw new Error(`애니 페이지를 가져오지 못했습니다 (${watch.status}).`);
+  const buildVersion = parseAnilifeBuildVersion(await watch.text());
+  const media = await nativeGet({
+    url: `${ANILIFE_API_ORIGIN}/v1/media/${id}`,
+    headers: anilifeMediaRequestHeaders(id, buildVersion, navigator.userAgent),
+    responseType: 'text',
+  });
+  const status = media.status >= 200 && media.status <= 599 ? media.status : 502;
+  const body = typeof media.data === 'string' ? media.data : JSON.stringify(media.data);
+  return new Response(body, {
+    status,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  });
+}
+
+export async function fetchAnilifeStreamResource(
+  rawUrl,
+  { responseType = 'text', range = '', signal } = {}
+) {
+  throwIfAborted(signal);
+  const target = assertAnilifeStreamUrl(rawUrl);
+  if (!isNativeApp()) {
+    const response = await fetch(`/api/anilife-stream?url=${encodeURIComponent(target.href)}`, {
+      headers: range ? { Range: range } : undefined,
+      signal,
+    });
+    if (!response.ok) {
+      const error = new Error(`애니 스트림이 ${response.status} 응답을 반환했습니다.`);
+      error.status = response.status;
+      throw error;
+    }
+    return {
+      status: response.status,
+      data: responseType === 'arraybuffer' ? await response.arrayBuffer() : await response.text(),
+    };
+  }
+
+  const response = await nativeGet({
+    url: target.href,
+    headers: anilifeStreamRequestHeaders(navigator.userAgent, range),
+    responseType: 'blob',
+  });
+  throwIfAborted(signal);
+  if (response.status < 200 || response.status >= 300) {
+    const error = new Error(`애니 스트림이 ${response.status} 응답을 반환했습니다.`);
+    error.status = response.status;
+    throw error;
+  }
+  const buffer = await base64ToBlob(
+    response.data,
+    header(response.headers, 'content-type') || 'application/octet-stream'
+  ).arrayBuffer();
+  return {
+    status: response.status,
+    data: responseType === 'arraybuffer' ? buffer : new TextDecoder().decode(buffer),
+  };
 }
 
 /** 표시·서재 저장 모두 같은 바이트 경로를 쓴다. */

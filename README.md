@@ -8,8 +8,8 @@ Cloudflare 웹앱, Android APK, Termux 로컬 서버 세 경로를 지원한다.
 ## 현재 검증된 배포
 
 - Android APK: **v1.3** (`versionCode 4`)
-- Android OTA: `web-35cbd0c389a1a24affd8`
-- Cloudflare Worker: `2b496ee3-686c-437f-97b0-a4f5f9674807`
+- Android OTA: **v1.4.0** (`web-2a1545230fd27439a723`)
+- Cloudflare Worker: `93f0257d-7dd0-4de9-979c-f83c1a897499`
 - 자동 테스트: JavaScript 136개 + Android 수집 회귀 테스트
 - 태블릿 실측: 원본 15장 수집, 다음 화 12장 전환, 프리로드된 다음 화 이동 54ms
 
@@ -25,6 +25,7 @@ Cloudflare 웹앱, Android APK, Termux 로컬 서버 세 경로를 지원한다.
 - IndexedDB 오프라인 서재와 10화 연속 저장
 - 서비스워커 기반 오프라인 앱 부팅
 - Cloudflare Worker 인증·페이지 프록시·이미지 프록시
+- 애니라이프 watch 주소 저장 및 앱 내부 HLS 영상 재생
 - RSA 서명 + SHA-256 검증 Android 웹 번들 OTA
 
 ## 가장 빠른 사용법 — Android APK

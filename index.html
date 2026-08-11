@@ -222,7 +222,10 @@
       <div class="sheet sheet-lg">
         <div class="sheet-head">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <h2>내 만화 서재 (E-Book 책장)</h2>
+            <div class="shelf-tabs" aria-label="서재 종류">
+              <button class="btn btn-sm btn-primary" id="tab-comic-shelf" type="button" aria-pressed="true">📚 만화</button>
+              <button class="btn btn-sm" id="tab-anime-shelf" type="button" aria-pressed="false">🎬 애니</button>
+            </div>
             <span class="ota-tag" id="ep-modal-ota-tag">OTA...</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">

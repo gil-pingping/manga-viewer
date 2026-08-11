@@ -4,8 +4,44 @@ import { isAnilifeUrl, parseAnilifeWatchId, parseAnilifePage } from '../src/coll
 
 test('anilifeCollector: URL 판별 및 UUID 추출', () => {
   assert.equal(isAnilifeUrl('https://anilife.app/watch?id=32bd6d4c-e5bb-4124-a890-e389a30007ea'), true);
+  assert.equal(isAnilifeUrl('https://evil-anilife.app/watch?id=32bd6d4c-e5bb-4124-a890-e389a30007ea'), false);
+  assert.equal(isAnilifeUrl('http://anilife.app/watch?id=32bd6d4c-e5bb-4124-a890-e389a30007ea'), false);
   assert.equal(isAnilifeUrl('https://naver.com'), false);
   assert.equal(parseAnilifeWatchId('https://anilife.app/watch?id=32bd6d4c-e5bb-4124-a890-e389a30007ea'), '32bd6d4c-e5bb-4124-a890-e389a30007ea');
+  assert.equal(parseAnilifeWatchId('https://anilife.app/watch?id=not-a-uuid'), null);
+  assert.equal(parseAnilifeWatchId('https://anilife.app/content?id=32bd6d4c-e5bb-4124-a890-e389a30007ea'), null);
+});
+
+test('anilifeCollector: 현재 Nuxt SSR payload를 서재 메타데이터로 변환', () => {
+  const payload = [
+    ['ShallowReactive', 1],
+    { data: 2 },
+    ['ShallowReactive', 3],
+    { current: 4 },
+    { subject: 5, episodeNum: 6, thumbnail: 7, media: 8 },
+    '불꽃놀이 갈래',
+    '6',
+    'https://image.anilife.life/thumb.png',
+    { id: 9, title: 10 },
+    1371,
+    '내가 인기 없는 것은 아무리 생각해도 너희들이 나빠!',
+  ];
+  const html = `
+    <title>옛 제목 - 6화 | 애니라이프</title>
+    <script type="application/json" id="__NUXT_DATA__">${JSON.stringify(payload)}</script>
+  `;
+  const parsed = parseAnilifePage(
+    html,
+    'https://anilife.app/watch?id=26050e24-2175-4e15-855d-d864120abc30'
+  );
+
+  assert.equal(parsed.id, '26050e24-2175-4e15-855d-d864120abc30');
+  assert.equal(parsed.kind, 'anime');
+  assert.equal(parsed.seriesTitle, '내가 인기 없는 것은 아무리 생각해도 너희들이 나빠!');
+  assert.equal(parsed.episodeNumber, 6);
+  assert.equal(parsed.episodeTitle, '불꽃놀이 갈래');
+  assert.equal(parsed.posterUrl, 'https://image.anilife.life/thumb.png');
+  assert.equal(parsed.timestamps.op, null);
 });
 
 test('anilifeCollector: 2단계 HTML/Next.js 데이터 및 타임스탬프 파싱 검증', () => {

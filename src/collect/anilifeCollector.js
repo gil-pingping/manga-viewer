@@ -1,6 +1,6 @@
 /**
  * @file anilifeCollector.js
- * anilife.app (애니라이프) 애니메이션 수집 및 에피소드 UUID 맵, 정밀 스킵 타임스탬프 추출기
+ * anilife.app watch 주소에서 서재용 메타데이터를 추출한다.
  */
 
 /**
@@ -12,7 +12,13 @@ export function isAnilifeUrl(url) {
   if (!url) return false;
   try {
     const parsed = new URL(url);
-    return parsed.hostname.includes('anilife.app') || parsed.hostname.includes('anilife.live');
+    const host = parsed.hostname.toLowerCase();
+    return parsed.protocol === 'https:' && (
+      host === 'anilife.app' ||
+      host.endsWith('.anilife.app') ||
+      host === 'anilife.live' ||
+      host.endsWith('.anilife.live')
+    );
   } catch {
     return false;
   }
@@ -27,14 +33,18 @@ export function parseAnilifeWatchId(url) {
   if (!isAnilifeUrl(url)) return null;
   try {
     const parsed = new URL(url);
-    return parsed.searchParams.get('id') || null;
+    if (parsed.pathname !== '/watch') return null;
+    const id = parsed.searchParams.get('id') || '';
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+      ? id
+      : null;
   } catch {
     return null;
   }
 }
 
 /**
- * anilife HTML 또는 Next.js 페이로드에서 애니 메타데이터 및 회차 UUID 맵, 정밀 스킵 타임스탬프를 추출한다.
+ * anilife HTML의 title/meta와 구·신 SSR 페이로드에서 애니 메타데이터를 추출한다.
  * @param {string} html 
  * @param {string} sourceUrl 
  * @returns {Object|null}
@@ -114,7 +124,34 @@ export function parseAnilifePage(html, sourceUrl) {
     }
   }
 
-  // 4. 비디오 태그 또는 iframe src 폴백 추출
+  // 4. 현재 Nuxt SSR payload. 값이 배열 인덱스로 압축돼 있어 한 단계 역참조한다.
+  const nuxtDataMatch = html.match(/<script[^>]*id=["']__NUXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (nuxtDataMatch?.[1]) {
+    try {
+      const payload = JSON.parse(nuxtDataMatch[1]);
+      const value = (candidate) =>
+        Number.isInteger(candidate) && candidate >= 0 && candidate < payload.length
+          ? payload[candidate]
+          : candidate;
+      const summary = payload.find((item) =>
+        item && typeof item === 'object' && !Array.isArray(item) &&
+        Object.hasOwn(item, 'episodeNum') && Object.hasOwn(item, 'media')
+      );
+      if (summary) {
+        episodeNumber = Number(value(summary.episodeNum)) || episodeNumber;
+        episodeTitle = value(summary.subject) || episodeTitle;
+        posterUrl = value(summary.thumbnail) || posterUrl;
+        const media = value(summary.media);
+        if (media && typeof media === 'object') {
+          seriesTitle = value(media.title) || seriesTitle;
+        }
+      }
+    } catch (error) {
+      console.warn('Nuxt 데이터 파싱 경고:', error);
+    }
+  }
+
+  // 5. 구조화된 구형 페이지에 직접 실린 재생 주소만 보존한다.
   if (!streamUrl) {
     const videoSrcMatch = html.match(/<video[^>]+src=["'](.*?)["']/i) || html.match(/<source[^>]+src=["'](.*?)["']/i);
     if (videoSrcMatch) streamUrl = videoSrcMatch[1];
@@ -125,15 +162,12 @@ export function parseAnilifePage(html, sourceUrl) {
     if (iframeSrcMatch) embedUrl = iframeSrcMatch[1];
   }
 
-  // 5. 정밀 스킵 타임스탬프 기본값 폴백 (전형적 OP: 85초~175초, ED: 끝 90초 전)
-  if (!timestamps.op) {
-    timestamps.op = { startTime: 85, endTime: 175 };
-  }
-
   const watchId = parseAnilifeWatchId(sourceUrl);
+  if (!watchId) return null;
 
   return {
-    id: watchId || `anilife-${seriesTitle}-${episodeNumber}`,
+    id: watchId,
+    kind: 'anime',
     type: 'anime',
     sourceUrl,
     seriesTitle,

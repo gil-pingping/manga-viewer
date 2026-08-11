@@ -22,6 +22,15 @@ import {
   pageRequestHeaders,
   upstreamFetch,
 } from '../src/shared/proxyRules.js';
+import {
+  ANILIFE_API_ORIGIN,
+  ANILIFE_ORIGIN,
+  anilifeMediaRequestHeaders,
+  anilifeStreamRequestHeaders,
+  assertAnilifeStreamUrl,
+  assertAnilifeWatchId,
+  parseAnilifeBuildVersion,
+} from '../src/shared/anilifeRules.js';
 
 const COOKIE_NAME = 'mv_auth';
 const COOKIE_MAX_AGE = 31536000; // 1년
@@ -219,6 +228,76 @@ async function handleFetchPage(request) {
   });
 }
 
+async function handleAnilifeMedia(request) {
+  const id = new URL(request.url).searchParams.get('id');
+  try {
+    assertAnilifeWatchId(id);
+  } catch (error) {
+    return textError(400, error.message);
+  }
+
+  try {
+    const watchUrl = `${ANILIFE_ORIGIN}/watch?id=${id}`;
+    const watch = await upstreamFetch(watchUrl, pageRequestHeaders(`${ANILIFE_ORIGIN}/`));
+    if (!watch.ok) return textError(502, `애니 페이지가 ${watch.status} 응답을 반환했습니다.`);
+
+    const buildVersion = parseAnilifeBuildVersion(await watch.text());
+    const media = await upstreamFetch(
+      `${ANILIFE_API_ORIGIN}/v1/media/${id}`,
+      anilifeMediaRequestHeaders(
+        id,
+        buildVersion,
+        request.headers.get('User-Agent') || undefined
+      )
+    );
+    if (!media.ok) return textError(502, `애니 서버가 ${media.status} 응답을 반환했습니다.`);
+
+    return new Response(media.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      },
+    });
+  } catch (error) {
+    return textError(502, `애니 재생 정보를 받지 못했습니다: ${error.message}`);
+  }
+}
+
+async function handleAnilifeStream(request) {
+  let target;
+  try {
+    target = assertAnilifeStreamUrl(new URL(request.url).searchParams.get('url'));
+  } catch (error) {
+    return textError(400, error.message);
+  }
+
+  try {
+    const upstream = await upstreamFetch(
+      target.href,
+      anilifeStreamRequestHeaders(
+        request.headers.get('User-Agent') || undefined,
+        request.headers.get('Range') || ''
+      )
+    );
+    if (!upstream.ok) return textError(502, `애니 스트림이 ${upstream.status} 응답을 반환했습니다.`);
+
+    const headers = new Headers({
+      'Content-Type': upstream.headers.get('Content-Type') || 'application/octet-stream',
+      'Cache-Control': 'private, max-age=300',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    for (const name of ['Content-Length', 'Accept-Ranges', 'Content-Range']) {
+      const value = upstream.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    return new Response(upstream.body, { status: upstream.status, headers });
+  } catch (error) {
+    return textError(502, `애니 스트림 중계 실패: ${error.message}`);
+  }
+}
+
 /**
  * Worker 에는 브라우저가 없다.
  *
@@ -262,6 +341,8 @@ export default {
 
     if (path === '/api/proxy-image') return handleProxyImage(request);
     if (path === '/api/fetch-page') return handleFetchPage(request);
+    if (path === '/api/anilife-media') return handleAnilifeMedia(request);
+    if (path === '/api/anilife-stream') return handleAnilifeStream(request);
     if (path === '/api/render-page') return handleRenderPage();
 
     return json(404, { ok: false, error: '없는 경로입니다.' });

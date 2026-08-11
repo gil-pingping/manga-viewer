@@ -1,165 +1,245 @@
-/**
- * @file animePlayer.js
- * 애니메이션 비디오 플레이어 오버레이, 0초 지연 다음화 연속 재생 및 정밀 오프닝/엔딩 스킵 엔진
- */
+import Hls, { LoadStats } from 'hls.js';
+
+function createResourceLoader(loadResource) {
+  return class ResourceLoader {
+    constructor() {
+      this.stats = new LoadStats();
+      this.controller = new AbortController();
+      this.callbacks = null;
+      this.context = null;
+      this.terminal = false;
+    }
+
+    load(context, config, callbacks) {
+      this.context = context;
+      this.callbacks = callbacks;
+      this.stats.loading.start = performance.now();
+      const configuredTimeout = config.loadPolicy.maxLoadTimeMs || config.timeout;
+      const timeoutMs = Number.isFinite(configuredTimeout) ? configuredTimeout : 20000;
+      this.timeout = setTimeout(() => {
+        if (this.terminal) return;
+        this.terminal = true;
+        this.stats.aborted = true;
+        this.controller.abort();
+        callbacks.onTimeout(this.stats, context, null);
+      }, timeoutMs);
+      const range = context.rangeEnd
+        ? `bytes=${context.rangeStart}-${context.rangeEnd - 1}`
+        : '';
+      loadResource(context.url, {
+        responseType: context.responseType === 'arraybuffer' ? 'arraybuffer' : 'text',
+        range,
+        signal: this.controller.signal,
+      }).then(({ data, status }) => {
+        if (this.terminal) return;
+        this.terminal = true;
+        clearTimeout(this.timeout);
+        const end = performance.now();
+        this.stats.loading.first = end;
+        this.stats.loading.end = end;
+        this.stats.loaded = this.stats.total = data.byteLength ?? data.length;
+        callbacks.onProgress?.(this.stats, context, data, null);
+        callbacks.onSuccess({ url: context.url, data, code: status }, this.stats, context, null);
+      }).catch((error) => {
+        if (this.terminal) return;
+        this.terminal = true;
+        clearTimeout(this.timeout);
+        callbacks.onError(
+          { code: error.status || 0, text: error.message },
+          context,
+          null,
+          this.stats
+        );
+      });
+    }
+
+    abort() {
+      if (this.terminal) return;
+      this.terminal = true;
+      this.stats.aborted = true;
+      clearTimeout(this.timeout);
+      this.controller.abort();
+      this.callbacks?.onAbort?.(this.stats, this.context, null);
+    }
+
+    destroy() {
+      this.abort();
+      this.callbacks = null;
+      this.context = null;
+    }
+
+    getCacheAge() {
+      return null;
+    }
+
+    getResponseHeader() {
+      return null;
+    }
+  };
+}
 
 export class AnimePlayer {
-  constructor(options = {}) {
-    this.container = options.container || document.body;
-    this.onNextEpisode = options.onNextEpisode || (() => {});
-    this.onPrevEpisode = options.onPrevEpisode || (() => {});
-
+  constructor({ container = document.body, loadResource, onNext, onPrev, onClose, onError } = {}) {
+    this.loadResource = loadResource;
+    this.onNext = onNext || (() => {});
+    this.onPrev = onPrev || (() => {});
+    this.onClose = onClose || (() => {});
+    this.onError = onError || (() => {});
     this.currentAnime = null;
-    this.nextPrefetchedAnime = null;
-    this.isOpeningAutoSkip = true;
-    this.isEndingAutoSkip = true;
-    this.hasSkippedOp = false;
+    this.hls = null;
+    this.hasSkippedOpening = false;
 
-    this.initUI();
-  }
-
-  initUI() {
     this.overlay = document.createElement('div');
     this.overlay.className = 'anime-player-overlay';
     this.overlay.hidden = true;
-
+    this.overlay.setAttribute('role', 'dialog');
+    this.overlay.setAttribute('aria-modal', 'true');
+    this.overlay.setAttribute('aria-label', '애니 플레이어');
     this.overlay.innerHTML = `
-      <div class="anime-player-header">
-        <button type="button" class="anime-back-btn" id="anime-back-btn">← 서재로</button>
-        <h2 class="anime-player-title" id="anime-player-title">애니메이션</h2>
-        <span class="anime-player-badge" id="anime-player-badge"></span>
-      </div>
-
-      <div class="anime-video-container" id="anime-video-container">
-        <video id="anime-video" class="anime-video" controls playsinline></video>
-        <iframe id="anime-iframe" class="anime-iframe" hidden frameborder="0" allowfullscreen></iframe>
-        <div class="anime-skip-toast" id="anime-skip-toast" hidden>오프닝 스킵 적용됨 (+90s)</div>
-      </div>
-
-      <div class="anime-player-controls">
-        <div class="anime-controls-row">
-          <button type="button" class="btn btn-sm" id="btn-anime-prev">⏪ 이전화</button>
-          <button type="button" class="btn btn-sm" id="btn-anime-seek-back">◀️ 10초</button>
-          <button type="button" class="btn btn-sm btn-primary" id="btn-anime-skip-op">⏭️ 오프닝 건너뛰기</button>
-          <button type="button" class="btn btn-sm" id="btn-anime-seek-forward">10초 ▶️</button>
-          <button type="button" class="btn btn-sm" id="btn-anime-next">⏩ 다음화</button>
-          <select id="anime-playback-rate" class="anime-speed-select">
-            <option value="1.0">1.0x</option>
-            <option value="1.25">1.25x</option>
-            <option value="1.5">1.5x</option>
-            <option value="2.0">2.0x</option>
-          </select>
+      <header class="anime-player-header">
+        <button type="button" class="anime-back-btn">← 서재</button>
+        <div class="anime-player-heading">
+          <strong class="anime-player-title">애니메이션</strong>
+          <span class="anime-player-badge"></span>
         </div>
+      </header>
+      <div class="anime-video-container">
+        <video class="anime-video" controls playsinline preload="metadata"></video>
+        <div class="anime-player-status" role="status">영상 준비 중…</div>
+        <div class="anime-skip-toast" hidden></div>
       </div>
+      <footer class="anime-player-controls">
+        <button type="button" class="btn btn-sm anime-prev">⏮ 이전화</button>
+        <button type="button" class="btn btn-sm anime-seek-back">−10초</button>
+        <button type="button" class="btn btn-sm btn-primary anime-skip-op">오프닝 스킵</button>
+        <button type="button" class="btn btn-sm anime-seek-forward">+10초</button>
+        <button type="button" class="btn btn-sm anime-next">다음화 ⏭</button>
+        <select class="anime-speed-select" aria-label="재생 속도">
+          <option value="1">1.0×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2.0×</option>
+        </select>
+      </footer>
     `;
+    container.appendChild(this.overlay);
 
-    this.container.appendChild(this.overlay);
+    this.video = this.overlay.querySelector('.anime-video');
+    this.title = this.overlay.querySelector('.anime-player-title');
+    this.badge = this.overlay.querySelector('.anime-player-badge');
+    this.status = this.overlay.querySelector('.anime-player-status');
+    this.skipToast = this.overlay.querySelector('.anime-skip-toast');
+    this.prevButton = this.overlay.querySelector('.anime-prev');
+    this.nextButton = this.overlay.querySelector('.anime-next');
 
-    this.videoEl = this.overlay.querySelector('#anime-video');
-    this.iframeEl = this.overlay.querySelector('#anime-iframe');
-    this.titleEl = this.overlay.querySelector('#anime-player-title');
-    this.badgeEl = this.overlay.querySelector('#anime-player-badge');
-    this.skipToastEl = this.overlay.querySelector('#anime-skip-toast');
-
-    this.bindEvents();
+    this.overlay.querySelector('.anime-back-btn').addEventListener('click', () => this.close());
+    this.prevButton.addEventListener('click', () => this.navigate('prev'));
+    this.nextButton.addEventListener('click', () => this.navigate('next'));
+    this.overlay.querySelector('.anime-seek-back').addEventListener('click', () => {
+      this.video.currentTime = Math.max(0, this.video.currentTime - 10);
+    });
+    this.overlay.querySelector('.anime-seek-forward').addEventListener('click', () => {
+      this.video.currentTime = Math.min(this.video.duration || Infinity, this.video.currentTime + 10);
+    });
+    this.overlay.querySelector('.anime-skip-op').addEventListener('click', () => this.skipOpening());
+    this.overlay.querySelector('.anime-speed-select').addEventListener('change', (event) => {
+      this.video.playbackRate = Number(event.target.value) || 1;
+    });
+    this.video.addEventListener('loadedmetadata', () => {
+      this.status.hidden = true;
+      this.video.play().catch(() => {});
+    });
+    this.video.addEventListener('timeupdate', () => this.autoSkipOpening());
+    this.video.addEventListener('ended', () => this.navigate('next'));
   }
 
-  bindEvents() {
-    this.overlay.querySelector('#anime-back-btn').onclick = () => this.close();
-    this.overlay.querySelector('#btn-anime-prev').onclick = () => this.onPrevEpisode();
-    this.overlay.querySelector('#btn-anime-next').onclick = () => this.onNextEpisode();
-
-    this.overlay.querySelector('#btn-anime-seek-back').onclick = () => {
-      if (this.videoEl) this.videoEl.currentTime = Math.max(0, this.videoEl.currentTime - 10);
-    };
-    this.overlay.querySelector('#btn-anime-seek-forward').onclick = () => {
-      if (this.videoEl) this.videoEl.currentTime += 10;
-    };
-
-    this.overlay.querySelector('#btn-anime-skip-op').onclick = () => this.triggerOpSkip();
-
-    const speedSelect = this.overlay.querySelector('#anime-playback-rate');
-    speedSelect.onchange = (e) => {
-      if (this.videoEl) this.videoEl.playbackRate = parseFloat(e.target.value);
-    };
-
-    // 정밀 스킵 & 엔딩 감지 0.2초 주간 모니터링
-    this.videoEl.ontimeupdate = () => this.handleTimeUpdate();
-    this.videoEl.onended = () => {
-      if (this.isEndingAutoSkip) this.onNextEpisode();
-    };
+  destroyStream() {
+    this.hls?.destroy();
+    this.hls = null;
+    this.video.pause();
+    this.video.removeAttribute('src');
+    this.video.load();
   }
 
-  loadAnime(animeData) {
-    this.currentAnime = animeData;
-    this.hasSkippedOp = false;
+  load(anime) {
+    this.destroyStream();
+    this.currentAnime = anime;
+    this.hasSkippedOpening = false;
+    this.title.textContent = anime.seriesTitle;
+    this.badge.textContent = `${anime.episodeNumber}화${anime.episodeTitle ? ` · ${anime.episodeTitle}` : ''}`;
+    this.prevButton.disabled = !anime.navigation?.prev;
+    this.nextButton.disabled = !anime.navigation?.next;
+    this.status.hidden = false;
+    this.status.textContent = '영상 준비 중…';
     this.overlay.hidden = false;
 
-    this.titleEl.textContent = `${animeData.seriesTitle} - ${animeData.episodeNumber}화`;
-    if (animeData.episodeTitle) {
-      this.badgeEl.textContent = animeData.episodeTitle;
-    }
-
-    if (animeData.streamUrl) {
-      this.iframeEl.hidden = true;
-      this.videoEl.hidden = false;
-      this.videoEl.src = animeData.streamUrl;
-      this.videoEl.play().catch(() => {});
-    } else if (animeData.embedUrl) {
-      this.videoEl.hidden = true;
-      this.iframeEl.hidden = false;
-      this.iframeEl.src = animeData.embedUrl;
-    }
-  }
-
-  triggerOpSkip() {
-    if (!this.videoEl || !this.currentAnime) return;
-    const op = this.currentAnime.timestamps?.op;
-    const seekTarget = op?.endTime || (this.videoEl.currentTime + 90);
-    this.videoEl.currentTime = seekTarget;
-    this.showToast('오프닝 건너뛰기 완료!');
-  }
-
-  handleTimeUpdate() {
-    if (!this.videoEl || !this.currentAnime) return;
-    const currentTime = this.videoEl.currentTime;
-    const duration = this.videoEl.duration;
-
-    const op = this.currentAnime.timestamps?.op;
-    const ed = this.currentAnime.timestamps?.ed;
-
-    // 1. 정밀 오프닝 스킵 감지
-    if (this.isOpeningAutoSkip && !this.hasSkippedOp && op && op.startTime && op.endTime) {
-      if (currentTime >= op.startTime && currentTime < op.endTime) {
-        this.hasSkippedOp = true;
-        this.videoEl.currentTime = op.endTime;
-        this.showToast('정밀 오프닝 자동 스킵 적용 (0.1s 정밀)');
+    if (Hls.isSupported()) {
+      const config = { enableWorker: true };
+      if (this.loadResource) config.loader = createResourceLoader(this.loadResource);
+      else {
+        config.xhrSetup = (xhr, url) => {
+          xhr.open('GET', `/api/anilife-stream?url=${encodeURIComponent(url)}`, true);
+        };
       }
+      this.hls = new Hls(config);
+      this.hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) this.fail(new Error(`영상 스트림 오류: ${data.details}`));
+      });
+      this.hls.loadSource(anime.streamUrl);
+      this.hls.attachMedia(this.video);
+      return;
     }
-
-    // 2. 정밀 엔딩 스킵 & 다음화 자동 연결 감지
-    if (this.isEndingAutoSkip && ed && ed.startTime) {
-      if (currentTime >= ed.startTime) {
-        this.showToast('엔딩 구간 감지 -> 다음화 0초 자동 연속 전환!');
-        this.onNextEpisode();
-      }
+    if (this.video.canPlayType('application/vnd.apple.mpegurl')) {
+      this.video.src = anime.streamUrl;
+      return;
     }
+    this.fail(new Error('이 브라우저는 HLS 영상을 재생할 수 없습니다.'));
   }
 
-  showToast(msg) {
-    this.skipToastEl.textContent = msg;
-    this.skipToastEl.hidden = false;
-    setTimeout(() => {
-      this.skipToastEl.hidden = true;
-    }, 2000);
+  fail(error) {
+    this.status.hidden = false;
+    this.status.textContent = error.message;
+    this.onError(error);
+  }
+
+  navigate(direction) {
+    const target = this.currentAnime?.navigation?.[direction];
+    if (!target) return;
+    (direction === 'next' ? this.onNext : this.onPrev)(target);
+  }
+
+  skipOpening() {
+    const end = this.currentAnime?.timestamps?.op?.endTime;
+    this.video.currentTime = end || Math.min(this.video.duration || Infinity, this.video.currentTime + 90);
+    this.showSkipToast('오프닝 스킵');
+  }
+
+  autoSkipOpening() {
+    const opening = this.currentAnime?.timestamps?.op;
+    if (
+      this.hasSkippedOpening ||
+      !opening ||
+      this.video.currentTime < opening.startTime ||
+      this.video.currentTime >= opening.endTime
+    ) return;
+    this.hasSkippedOpening = true;
+    this.video.currentTime = opening.endTime;
+    this.showSkipToast('오프닝 자동 스킵');
+  }
+
+  showSkipToast(message) {
+    this.skipToast.textContent = message;
+    this.skipToast.hidden = false;
+    clearTimeout(this.skipToastTimer);
+    this.skipToastTimer = setTimeout(() => {
+      this.skipToast.hidden = true;
+    }, 1800);
   }
 
   close() {
-    if (this.videoEl) {
-      this.videoEl.pause();
-      this.videoEl.src = '';
-    }
-    if (this.iframeEl) this.iframeEl.src = '';
+    this.destroyStream();
     this.overlay.hidden = true;
+    this.currentAnime = null;
+    this.onClose();
   }
 }

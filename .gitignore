@@ -27,6 +27,9 @@ dist-ssr
 .claude-flow
 .playwright-mcp
 
+# 기기 데이터 백업 (로컬 보관)
+backups/
+
 # Cloudflare
 # .dev.vars 는 로컬 시크릿(MV_TOKEN)이다. 커밋되면 프록시 토큰이 이력에 영구히 남는다.
 .dev.vars
