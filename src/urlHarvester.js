@@ -363,7 +363,19 @@ function findAdjacentLink(doc, pattern, origin, currentUrl) {
   for (const a of doc.querySelectorAll('a[href]')) {
     const text = (a.textContent || '').trim();
     const rel = a.getAttribute('rel') || '';
-    if (!pattern.test(text) && !pattern.test(rel)) continue;
+    const title = a.getAttribute('title') || '';
+    const aria = a.getAttribute('aria-label') || '';
+    const cls = a.getAttribute('class') || '';
+
+    let childMeta = '';
+    for (const child of a.querySelectorAll('*')) {
+      childMeta += ' ' + (child.getAttribute('title') || '') +
+                   ' ' + (child.getAttribute('aria-label') || '') +
+                   ' ' + (child.getAttribute('class') || '');
+    }
+
+    const targetStr = `${text} ${rel} ${title} ${aria} ${cls} ${childMeta}`;
+    if (!pattern.test(targetStr)) continue;
 
     const raw = a.getAttribute('href');
     if (!raw) continue;
@@ -384,8 +396,8 @@ function cleanTitle(rawTitle) {
   return title || '불러온 만화';
 }
 
-/** 화 번호로 쓰이는 흔한 파라미터 이름. titleId 같은 건 절대 건드리지 않는다 */
-const EPISODE_PARAMS = ['no', 'episode', 'ep', 'chapter', 'chap', 'toon'];
+/** 화 번호로 쓰이는 흔한 파라미터 이름. toon(시리즈ID)보다 num, ep 등 회차 파라미터를 우선 순위에 둔다 */
+const EPISODE_PARAMS = ['num', 'ep', 'chapter', 'chap', 'no', 'n', 'episode', 'toon'];
 
 /**
  * 사이트가 이전/다음 링크를 텍스트로 안 내주는 경우가 많다 (네이버 웹툰 확인).
@@ -410,3 +422,5 @@ function bumpEpisodeParam(rawUrl, delta) {
   }
   return null;
 }
+
+export { bumpEpisodeParam, findAdjacentLink };

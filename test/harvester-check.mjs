@@ -5,7 +5,7 @@
  * 북마클릿 수집(collector.js)은 DOM 이 있어야 하므로 실제 페이지에서 확인한다.
  */
 import assert from 'node:assert/strict';
-import { UrlHarvester } from '../src/urlHarvester.js';
+import { UrlHarvester, bumpEpisodeParam } from '../src/urlHarvester.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -15,6 +15,7 @@ function check(name, fn) {
 }
 
 console.log('parseRawText');
+
 
 check('주소 목록을 페이지로 바꾼다', () => {
   const pages = UrlHarvester.parseRawText(`
@@ -130,4 +131,31 @@ check('인라인 페이로드를 페이지로 바꾼다', () => {
   assert.equal(out.pages[0].originalUrl, 'https://cdn.test/ch3/001.webp');
 });
 
+console.log('\nbumpEpisodeParam');
+
+check('toon과 num이 함께 있으면 num을 증감시킨다', () => {
+  const target = 'https://wfwf436.com/cv?toon=10042&num=961';
+  assert.equal(
+    bumpEpisodeParam(target, +1),
+    'https://wfwf436.com/cv?toon=10042&num=962'
+  );
+  assert.equal(
+    bumpEpisodeParam(target, -1),
+    'https://wfwf436.com/cv?toon=10042&num=960'
+  );
+});
+
+check('일반적인 ep/no/chapter 파라미터 증감도 작동한다', () => {
+  assert.equal(
+    bumpEpisodeParam('https://example.com/view?no=10', +1),
+    'https://example.com/view?no=11'
+  );
+  assert.equal(
+    bumpEpisodeParam('https://example.com/view?episode=5', -1),
+    'https://example.com/view?episode=4'
+  );
+});
+
 console.log(`\n${passed}개 통과`);
+
+

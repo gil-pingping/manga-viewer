@@ -77,7 +77,23 @@ function runCollector(viewerOrigin) {
     for (var i = 0; i < anchors.length; i++) {
       var a = anchors[i];
       var text = (a.textContent || '').trim();
-      if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
+      var rel = a.getAttribute('rel') || '';
+      var title = a.getAttribute('title') || '';
+      var aria = a.getAttribute('aria-label') || '';
+      var cls = a.getAttribute('class') || '';
+
+      var childMeta = '';
+      var children = a.querySelectorAll('*');
+      for (var j = 0; j < children.length; j++) {
+        var ch = children[j];
+        childMeta += ' ' + (ch.getAttribute('title') || '') +
+                     ' ' + (ch.getAttribute('aria-label') || '') +
+                     ' ' + (ch.getAttribute('class') || '');
+      }
+
+      var targetStr = text + ' ' + rel + ' ' + title + ' ' + aria + ' ' + cls + ' ' + childMeta;
+      if (!re.test(targetStr)) continue;
+
       var raw = a.getAttribute('href');
       if (!raw) continue;
       var href;
@@ -179,7 +195,23 @@ function collectForNative() {
     for (var i = 0; i < anchors.length; i++) {
       var a = anchors[i];
       var text = (a.textContent || '').trim();
-      if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
+      var rel = a.getAttribute('rel') || '';
+      var title = a.getAttribute('title') || '';
+      var aria = a.getAttribute('aria-label') || '';
+      var cls = a.getAttribute('class') || '';
+
+      var childMeta = '';
+      var children = a.querySelectorAll('*');
+      for (var j = 0; j < children.length; j++) {
+        var ch = children[j];
+        childMeta += ' ' + (ch.getAttribute('title') || '') +
+                     ' ' + (ch.getAttribute('aria-label') || '') +
+                     ' ' + (ch.getAttribute('class') || '');
+      }
+
+      var targetStr = text + ' ' + rel + ' ' + title + ' ' + aria + ' ' + cls + ' ' + childMeta;
+      if (!re.test(targetStr)) continue;
+
       var raw = a.getAttribute('href');
       if (!raw) continue;
       var href;

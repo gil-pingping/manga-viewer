@@ -10,7 +10,7 @@ import {
   findAdjacentPrefetch,
   upsertChapter,
 } from './src/core/chapterNav.js';
-import { groupChaptersBySeries, parseSeriesAndEpisode } from './src/core/series.js';
+import { groupChaptersBySeries, parseSeriesAndEpisode, formatEpisodeDisplayLabel } from './src/core/series.js';
 import { updateChapterDomain } from './src/core/linkManager.js';
 import { preloadChapterImages } from './src/core/cacheManager.js';
 import * as library from './src/library.js';
@@ -562,7 +562,7 @@ function renderLibraryBar() {
  * 같은 사이트 + 같은 작품 경로를 공유하는 챕터를 한 묶음으로 보기 위한 것.
  * 에피소드 번호 파라미터(no, episode, ep, chapter 등)를 제거하면 시리즈 키가 된다.
  */
-const EPISODE_PARAM_NAMES = ['no', 'episode', 'ep', 'chapter', 'chap', 'toon'];
+const EPISODE_PARAM_NAMES = ['num', 'no', 'episode', 'ep', 'chapter', 'chap', 'n', 'toon'];
 
 function seriesKeyFromUrl(sourceUrl) {
   if (!sourceUrl) return null;
@@ -573,6 +573,7 @@ function seriesKeyFromUrl(sourceUrl) {
     }
     // 경로 끝의 숫자도 제거 (예: /webtoon/12345 → /webtoon/)
     url.pathname = url.pathname.replace(/\/\d+\/?$/, '/');
+    url.hash = '';
     return `${url.origin}${url.pathname}${url.search}`;
   } catch {
     return null;
@@ -866,7 +867,7 @@ function renderSeriesChaptersView(group) {
     const info = document.createElement('div');
     const epTitle = document.createElement('span');
     epTitle.className = 'shelf-ep-title';
-    epTitle.textContent = chapter.parsedEpisodeLabel || chapter.title || '회차';
+    epTitle.textContent = formatEpisodeDisplayLabel(chapter, group.chapters.indexOf(chapter));
 
     const epMeta = document.createElement('span');
     epMeta.className = 'shelf-ep-meta';

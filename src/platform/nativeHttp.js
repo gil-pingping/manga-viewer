@@ -51,6 +51,21 @@ async function nativeGet(options) {
   throw lastError || new Error('네이티브 HTTP 요청 실패');
 }
 
+import { decodeHtmlBuffer } from '../shared/charsetDecoder.js';
+
+function responseDataToBuffer(data) {
+  if (typeof data === 'string') {
+    const bytes = new Uint8Array(data.length);
+    for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 0xff;
+    return bytes.buffer;
+  } else if (data instanceof ArrayBuffer) {
+    return data;
+  } else if (ArrayBuffer.isView(data)) {
+    return data.buffer;
+  }
+  return new TextEncoder().encode(JSON.stringify(data || '')).buffer;
+}
+
 /** 웹은 기존 Worker, APK는 태블릿 네트워크로 대상 HTML을 직접 받는다. */
 export async function fetchPageDocument(targetUrl) {
   if (!isNativeApp()) {
@@ -64,10 +79,13 @@ export async function fetchPageDocument(targetUrl) {
     responseType: 'text',
   });
   const status = response.status >= 200 && response.status <= 599 ? response.status : 502;
-  const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+  const contentType = header(response.headers, 'content-type') || 'text/html';
+  const buffer = responseDataToBuffer(response.data);
+  const body = decodeHtmlBuffer(buffer, contentType);
+
   return new Response(body, {
     status,
-    headers: { 'Content-Type': header(response.headers, 'content-type') || 'text/html' },
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
 

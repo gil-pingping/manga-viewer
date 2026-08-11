@@ -18,6 +18,8 @@ import {
   pageRequestHeaders,
   upstreamFetch,
 } from './src/shared/proxyRules.js';
+import { decodeHtmlBuffer } from './src/shared/charsetDecoder.js';
+
 
 /**
  * 가드와 상류 요청은 Cloudflare Worker 와 **같은 파일을 공유한다**
@@ -254,7 +256,9 @@ export default function mangaProxyPlugin() {
             return;
           }
 
-          const html = await response.text();
+          const buffer = await response.arrayBuffer();
+          const contentType = response.headers.get('content-type') || '';
+          const html = decodeHtmlBuffer(buffer, contentType);
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
@@ -337,7 +341,21 @@ export default function mangaProxyPlugin() {
               for (let i = 0; i < anchors.length; i++) {
                 const a = anchors[i];
                 const text = (a.textContent || '').trim();
-                if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
+                const rel = a.getAttribute('rel') || '';
+                const title = a.getAttribute('title') || '';
+                const aria = a.getAttribute('aria-label') || '';
+                const cls = a.getAttribute('class') || '';
+
+                let childMeta = '';
+                for (const child of a.querySelectorAll('*')) {
+                  childMeta += ' ' + (child.getAttribute('title') || '') +
+                               ' ' + (child.getAttribute('aria-label') || '') +
+                               ' ' + (child.getAttribute('class') || '');
+                }
+
+                const targetStr = `${text} ${rel} ${title} ${aria} ${cls} ${childMeta}`;
+                if (!re.test(targetStr)) continue;
+
                 if (a.href.split('#')[0] === here) continue;
                 return a.href;
               }

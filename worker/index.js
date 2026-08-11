@@ -22,6 +22,8 @@ import {
   pageRequestHeaders,
   upstreamFetch,
 } from '../src/shared/proxyRules.js';
+import { decodeHtmlBuffer } from '../src/shared/charsetDecoder.js';
+
 
 const COOKIE_NAME = 'mv_auth';
 const COOKIE_MAX_AGE = 31536000; // 1년
@@ -209,7 +211,11 @@ async function handleFetchPage(request) {
    * text/plain 으로 돌려준다. 클라이언트는 DOMParser 로 파싱하므로 문제없고,
    * 이 주소를 직접 열었을 때 원격 HTML 이 우리 오리진 문서로 실행되지 않는다.
    */
-  return new Response(await upstream.text(), {
+  const buffer = await upstream.arrayBuffer();
+  const contentType = upstream.headers.get('content-type') || '';
+  const html = decodeHtmlBuffer(buffer, contentType);
+
+  return new Response(html, {
     status: 200,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',

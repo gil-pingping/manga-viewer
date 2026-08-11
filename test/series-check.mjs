@@ -49,3 +49,53 @@ const chaptersWithCover = [
 const groupsWithCover = groupChaptersBySeries(chaptersWithCover);
 assert.equal(groupsWithCover[0].coverUrl, 'http://img/onepiece_cover.jpg');
 console.log('✔ 대표 표지 이미지(coverUrl) 그룹핑 및 설정 성공!');
+
+// 4. 늑대닷컴 / wfwf 등 사이트 브랜딩 제거 및 URL 시리즈 키 기반 합치기 테스트
+const w1 = parseSeriesAndEpisode('원피스 961 - 늑대닷컴');
+assert.equal(w1.seriesTitle, '원피스');
+assert.equal(w1.episodeNum, 961);
+
+const w2 = parseSeriesAndEpisode('[늑대닷컴] 원피스 962화 > 늑대닷컴');
+assert.equal(w2.seriesTitle, '원피스');
+assert.equal(w2.episodeNum, 962);
+
+const wfwfChapters = [
+  { id: 'w1', title: '원피스 961 - 늑대닷컴', sourceUrl: 'https://wfwf436.com/cv?toon=10042&num=961' },
+  { id: 'w2', title: '원피스 962화 > 늑대닷컴', sourceUrl: 'https://wfwf436.com/cv?toon=10042&num=962' },
+];
+const wfwfGroups = groupChaptersBySeries(wfwfChapters);
+assert.equal(wfwfGroups.length, 1);
+assert.equal(wfwfGroups[0].seriesTitle, '원피스');
+assert.equal(wfwfGroups[0].chapters.length, 2);
+assert.equal(wfwfGroups[0].chapters[0].parsedEpisodeNum, 961);
+assert.equal(wfwfGroups[0].chapters[1].parsedEpisodeNum, 962);
+
+console.log('✔ 늑대닷컴 / wfwf 사이트 브랜딩 제거 및 URL 시리즈 키 그룹핑 성공!');
+
+// 5. 깨진 텍스트(æ...) 자가 치유 및 단정한 episodeLabel (953화) 테스트
+const brokenParse = parseSeriesAndEpisode('◆◆◆æ◆(ONE PIECE) 953 - ◆◆◆◆');
+assert.equal(brokenParse.seriesTitle, 'ONE PIECE');
+assert.equal(brokenParse.episodeNum, 953);
+assert.equal(brokenParse.episodeLabel, '953화');
+
+const brokenChapters = [
+  { id: 'b1', title: '◆◆◆æ◆(ONE PIECE) 953 - ◆◆◆◆', sourceUrl: 'https://wfwf436.com/cv?toon=10042&num=953' },
+];
+const brokenGroups = groupChaptersBySeries(brokenChapters);
+assert.equal(brokenGroups[0].chapters[0].parsedEpisodeLabel, '953화');
+assert.equal(brokenGroups[0].chapters[0].title, 'ONE PIECE 953화');
+
+console.log('✔ 깨진 제목 챕터 자가 치유(Self-healing) 및 깔끔한 목차 라벨(953화) 정제 성공!');
+
+// 6. formatEpisodeDisplayLabel 및 '회차' 단어 방지 검증
+import { formatEpisodeDisplayLabel } from '../src/core/series.js';
+
+assert.equal(formatEpisodeDisplayLabel({ title: '회차' }, 0), '1화');
+assert.equal(formatEpisodeDisplayLabel({ title: '◆◆◆æ◆' }, 2), '3화');
+assert.notEqual(formatEpisodeDisplayLabel({ title: 'ONE PIECE 953' }, 0), '회차');
+assert.equal(formatEpisodeDisplayLabel({ title: 'ONE PIECE 953' }, 0), '953화');
+
+console.log('✔ 목차 내 "회차" 단어 발생 완전 봉쇄 및 N화 정제 검증 성공!');
+
+
+
