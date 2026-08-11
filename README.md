@@ -8,8 +8,8 @@ Cloudflare 웹앱, Android APK, Termux 로컬 서버 세 경로를 지원한다.
 ## 현재 검증된 배포
 
 - Android APK: **v1.3** (`versionCode 4`)
-- Android OTA: **v1.4.0** (`web-2a1545230fd27439a723`)
-- Cloudflare Worker: `93f0257d-7dd0-4de9-979c-f83c1a897499`
+- Android OTA: **v1.4.1** (`web-b33dc7a560d5815de30b`)
+- Cloudflare Worker: `3bb82a70-1a7b-4e6f-b812-bce781c310db`
 - 자동 테스트: JavaScript 136개 + Android 수집 회귀 테스트
 - 태블릿 실측: 원본 15장 수집, 다음 화 12장 전환, 프리로드된 다음 화 이동 54ms
 

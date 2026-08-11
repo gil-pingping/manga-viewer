@@ -32,6 +32,23 @@ export function base64ToBlob(base64, type = 'application/octet-stream') {
   return new Blob(chunks, { type });
 }
 
+const NATIVE_STREAM_CHUNK_BYTES = 256 * 1024;
+
+function parseByteRange(range) {
+  if (!range) return { start: 0, end: null };
+  const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+  if (!match || Number(match[1]) > Number(match[2])) {
+    throw new Error('애니 스트림 Range가 올바르지 않습니다.');
+  }
+  return { start: Number(match[1]), end: Number(match[2]) };
+}
+
+function parseContentRange(value) {
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(value || '');
+  if (!match) throw new Error('애니 스트림 Content-Range가 없습니다.');
+  return { start: Number(match[1]), end: Number(match[2]), total: Number(match[3]) };
+}
+
 function header(headers, name) {
   const key = Object.keys(headers || {}).find((candidate) => candidate.toLowerCase() === name);
   return key ? headers[key] : '';
@@ -58,6 +75,58 @@ async function nativeGet(options) {
     }
   }
   throw lastError || new Error('네이티브 HTTP 요청 실패');
+}
+
+/** Android bridge 1MB 한계를 넘지 않도록 영상 바이트를 작은 Range로 나눠 받는다. */
+export async function readRangedNativeBytes(request, { url, headers, range = '', signal } = {}) {
+  const requested = parseByteRange(range);
+  const chunks = [];
+  let byteLength = 0;
+  let start = requested.start;
+
+  while (requested.end === null || start <= requested.end) {
+    throwIfAborted(signal);
+    const end = Math.min(
+      start + NATIVE_STREAM_CHUNK_BYTES - 1,
+      requested.end ?? Number.MAX_SAFE_INTEGER
+    );
+    const response = await request({
+      url,
+      headers: { ...headers, Range: `bytes=${start}-${end}` },
+      responseType: 'blob',
+    });
+    throwIfAborted(signal);
+    if (response.status !== 200 && response.status !== 206) {
+      const error = new Error(`애니 스트림이 ${response.status} 응답을 반환했습니다.`);
+      error.status = response.status;
+      throw error;
+    }
+
+    const bytes = new Uint8Array(await base64ToBlob(response.data).arrayBuffer());
+    if (response.status === 200) {
+      if (chunks.length) throw new Error('애니 스트림 서버가 Range 응답을 중단했습니다.');
+      return { status: 200, data: bytes.buffer };
+    }
+
+    const received = parseContentRange(header(response.headers, 'content-range'));
+    if (received.start !== start || received.end - received.start + 1 !== bytes.byteLength) {
+      throw new Error('애니 스트림 Range 응답 크기가 맞지 않습니다.');
+    }
+    chunks.push(bytes);
+    byteLength += bytes.byteLength;
+
+    if (received.end + 1 >= received.total ||
+        (requested.end !== null && received.end >= requested.end)) break;
+    start = received.end + 1;
+  }
+
+  const joined = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { status: range ? 206 : 200, data: joined.buffer };
 }
 
 /** 웹은 기존 Worker, APK는 태블릿 네트워크로 대상 HTML을 직접 받는다. */
@@ -125,9 +194,14 @@ export async function fetchAnilifeStreamResource(
     };
   }
 
+  const headers = anilifeStreamRequestHeaders(navigator.userAgent, range);
+  if (responseType === 'arraybuffer') {
+    return readRangedNativeBytes(nativeGet, { url: target.href, headers, range, signal });
+  }
+
   const response = await nativeGet({
     url: target.href,
-    headers: anilifeStreamRequestHeaders(navigator.userAgent, range),
+    headers,
     responseType: 'blob',
   });
   throwIfAborted(signal);
@@ -142,7 +216,7 @@ export async function fetchAnilifeStreamResource(
   ).arrayBuffer();
   return {
     status: response.status,
-    data: responseType === 'arraybuffer' ? buffer : new TextDecoder().decode(buffer),
+    data: new TextDecoder().decode(buffer),
   };
 }
 
