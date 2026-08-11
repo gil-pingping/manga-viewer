@@ -34,7 +34,7 @@ export async function confirmBundleReady() {
 }
 
 /** 있으면 서명된 새 웹 번들로 한 번 재시작한다. confirmBundleReady() 이후에 호출할 것. */
-export async function finishStartupAndApplyUpdate() {
+export async function finishStartupAndApplyUpdate({ beforeReload } = {}) {
   if (!isNativeApp()) return false;
 
   const response = await CapacitorHttp.get({
@@ -73,6 +73,7 @@ export async function finishStartupAndApplyUpdate() {
     await LiveUpdate.setNextBundle({ bundleId: manifest.bundleId });
   }
 
+  await beforeReload?.();
   await LiveUpdate.reload();
   return true;
 }

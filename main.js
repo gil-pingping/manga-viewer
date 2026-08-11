@@ -14,6 +14,15 @@ import { groupChaptersBySeries, parseSeriesAndEpisode } from './src/core/series.
 import { updateChapterDomain } from './src/core/linkManager.js';
 import { preloadChapterImages } from './src/core/cacheManager.js';
 import * as library from './src/library.js';
+import {
+  deleteCatalogItems,
+  getKv,
+  listCatalogItems,
+  mergeLegacyCatalog,
+  putCatalogItem,
+  putCatalogItems,
+  writeMigrationV1,
+} from './src/catalogStore.js';
 import { isNativeApp, resolvePageImageUrl, fetchPageImage } from './src/platform/nativeHttp.js';
 import {
   confirmBundleReady,
@@ -31,7 +40,11 @@ import {
   saveLastChapterId,
   readLastChapterId,
   saveRecentChapters,
-  readRecentChapters,
+  readRecentChaptersForMigration,
+  restoreStateFromKv,
+  saveInitialized,
+  queueStateWrite,
+  flushStateWrites,
   CHROME_IDLE_MS,
 } from './src/state.js';
 
@@ -40,6 +53,35 @@ import {
 /* ==================================================================== */
 
 const state = createInitialState();
+
+function catalogItem(item, touch = false) {
+  const now = Date.now();
+  return {
+    ...item,
+    kind: item.kind || 'comic',
+    pages: item.pages || [],
+    coverUrl: item.coverUrl || null,
+    sourceUrl: item.sourceUrl || null,
+    prevUrl: item.prevUrl || null,
+    nextUrl: item.nextUrl || null,
+    savedAt: item.savedAt || now,
+    updatedAt: touch ? now : (item.updatedAt || item.savedAt || now),
+  };
+}
+
+function persistCatalogItem(item) {
+  if (!item?.id || item.isDemo || item.id.startsWith('demo-')) return Promise.resolve();
+  return queueStateWrite(() => putCatalogItem(catalogItem(item, true)));
+}
+
+function persistCatalogItems(items) {
+  const records = items
+    .filter((item) => item?.id && !item.isDemo && !item.id.startsWith('demo-'))
+    .map((item) => catalogItem(item, true));
+  return records.length > 0
+    ? queueStateWrite(() => putCatalogItems(records))
+    : Promise.resolve();
+}
 
 // 9494f8b 리팩토링 때 실수로 지워졌던 선언들 — 없으면 strict mode에서
 // initEngine()의 `engine = ...` 대입이 ReferenceError로 부팅을 즉사시킨다.
@@ -269,24 +311,26 @@ function prefetchNextChapter(chapter) {
   ) return;
 
   const promise = UrlHarvester.fetchFromUrl(chapter.nextUrl, { silentRenderedFallback: true })
-    .then((harvested) => {
+    .then(async (harvested) => {
       if (harvested && harvested.pages?.length > 0) {
-        const { chapters } = upsertChapter(
+        const { chapters, chapter: prefetched } = upsertChapter(
           state.chapters,
           harvested,
           `prefetch-${Date.now()}`
         );
         state.chapters = chapters;
         saveRecentChapters(state.chapters);
+        await persistCatalogItem(prefetched);
 
         // 2화 연속 사전 수집: 다음 화의 다음 화도 백그라운드로 수집
         if (harvested.nextUrl) {
           UrlHarvester.fetchFromUrl(harvested.nextUrl, { silentRenderedFallback: true })
-            .then((h2) => {
+            .then(async (h2) => {
               if (h2 && h2.pages?.length > 0) {
                 const res = upsertChapter(state.chapters, h2, `prefetch2-${Date.now()}`);
                 state.chapters = res.chapters;
                 saveRecentChapters(state.chapters);
+                await persistCatalogItem(res.chapter);
               }
             })
             .catch(() => {});
@@ -305,7 +349,7 @@ function prefetchNextChapter(chapter) {
  * 새로 수집한 챕터를 목록 맨 앞에 넣고 바로 연다.
  * 같은 출처를 다시 불러오면 새로 만들지 않고 갱신한다.
  */
-function addChapter(harvested, idPrefix) {
+async function addChapter(harvested, idPrefix) {
   const { chapters, chapter } = upsertChapter(
     state.chapters,
     harvested,
@@ -313,12 +357,13 @@ function addChapter(harvested, idPrefix) {
   );
   state.chapters = chapters;
   saveRecentChapters(chapters);
+  await persistCatalogItem(chapter);
 
   // 새로 불러온 콘텐츠는 항상 auto 로 본다. 앞 챕터에서 고른 모드를 물려받으면
   // 웹툰이 페이지 넘김으로 뜨는 식으로 깨진다.
   resetModeToAuto();
 
-  openChapter(chapter.id, 1);
+  await openChapter(chapter.id, 1);
   return chapter;
 }
 
@@ -353,7 +398,7 @@ async function goChapter(delta) {
     setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
     const prepared = findAdjacentPrefetch(nextChapterPrefetch, state.currentId, delta, move.url);
     const harvested = (prepared && await prepared) || await UrlHarvester.fetchFromUrl(move.url);
-    addChapter(harvested, 'import');
+    await addChapter(harvested, 'import');
     toast(`${harvested.pages.length}장 불러왔습니다.`);
   } catch (err) {
     toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
@@ -391,6 +436,7 @@ async function saveOne(chapter, prefix = '') {
   await library.saveChapter(chapter, {
     onProgress: (i, total) => setBusy(true, `${prefix}${i}/${total}장 담는 중…`),
   });
+  await persistCatalogItem(chapter);
 }
 
 /**
@@ -427,6 +473,7 @@ async function batchSave(count) {
       const next = upsertChapter(state.chapters, harvested, `import-${Date.now()}-${n}`);
       state.chapters = next.chapters;
       chapter = next.chapter;
+      await persistCatalogItem(chapter);
     }
   } catch (err) {
     stopReason = err.message;
@@ -438,7 +485,7 @@ async function batchSave(count) {
   const bytes = [...state.saved.values()].reduce((sum, r) => sum + (r.bytes || 0), 0);
   const head = done > 0 ? `${done}화 담았습니다 (서재 ${library.formatBytes(bytes)}).` : '담지 못했습니다.';
   toast(stopReason ? `${head}\n${stopReason}` : head, {
-    error: done === 0,
+    error: Boolean(stopReason) || done === 0,
     duration: stopReason ? 8000 : 3000,
   });
 
@@ -704,10 +751,12 @@ function renderEpisodeList(selectedSeriesTitle = null) {
               if (ids.has(chapter.id)) chapter.coverUrl = fetched.coverUrl;
             }
             saveRecentChapters(state.chapters);
+            await persistCatalogItems(state.chapters.filter((chapter) => ids.has(chapter.id)));
             await tryLoad(fetched.coverUrl);
           }
         } catch (err) {
           console.warn('온라인 표지 자동 추출 복구 실패:', err);
+          throw err;
         }
       }
 
@@ -731,7 +780,7 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       coverWrapper.insertBefore(img, coverWrapper.firstChild);
     };
 
-    loadCoverImage();
+    loadCoverImage().catch((error) => console.warn('표지 로드 실패:', error));
 
     const badge = document.createElement('span');
     badge.className = 'shelf-badge';
@@ -749,8 +798,12 @@ function renderEpisodeList(selectedSeriesTitle = null) {
         e.stopPropagation();
         e.preventDefault();
         group.forceRefreshCover = true;
-        await loadCoverImage();
-        showToast(`'${group.seriesTitle}' 작품 표지를 새로고침했습니다.`);
+        try {
+          await loadCoverImage();
+          toast(`'${group.seriesTitle}' 작품 표지를 새로고침했습니다.`);
+        } catch (error) {
+          toast(`표지 저장 실패: ${error.message}`, { error: true });
+        }
       });
       coverWrapper.appendChild(refreshCoverBtn);
     }
@@ -791,28 +844,37 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       deleteBtn.title = '서재에서 삭제';
       deleteBtn.innerHTML = '🗑️ 삭제';
 
-      deleteBtn.addEventListener('click', (e) => {
+      deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         e.preventDefault();
 
-        // 1. 0초 동기 DOM 삭제
-        card.remove();
-
         const deleteIds = new Set(group.chapters.map((c) => c.id));
-        // 2. 메모리 목록 동기 말소
+        try {
+          await queueStateWrite(() => deleteCatalogItems([...deleteIds]));
+        } catch (error) {
+          toast(`서재 삭제 실패: ${error.message}`, { error: true });
+          return;
+        }
+
+        card.remove();
         state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
         saveRecentChapters(state.chapters);
 
-        // 3. 백그라운드 DB 삭제 및 용량 표시 갱신
-        (async () => {
-          for (const id of deleteIds) {
+        let offlineDeleteFailed = false;
+        for (const id of deleteIds) {
+          try {
+            await library.deleteChapter(id);
             state.saved.delete(id);
-            await library.deleteChapter(id).catch(() => {});
+          } catch (error) {
+            offlineDeleteFailed = true;
+            console.warn(`[서재] ${id} 오프라인 파일 삭제 실패`, error);
           }
-          renderLibraryBar();
-        })();
+        }
+        renderLibraryBar();
+        if (offlineDeleteFailed) {
+          toast('목록은 삭제됐지만 일부 오프라인 파일을 지우지 못했습니다.', { error: true });
+        }
 
-        // 서재 목록 UI 즉시 전체 동기 갱신!
         renderEpisodeList();
       });
 
@@ -886,10 +948,15 @@ function renderSeriesChaptersView(group) {
       delBtn.textContent = '✕';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await library.deleteChapter(chapter.id);
-        await refreshSaved();
-        renderEpisodeList(group.seriesTitle);
-        toast('서재에서 지웠습니다.');
+        try {
+          await library.deleteChapter(chapter.id);
+          await refreshSaved();
+          renderEpisodeList(group.seriesTitle);
+          toast('서재에서 지웠습니다.');
+        } catch (error) {
+          console.warn('[서재] 오프라인 파일 삭제 실패', error);
+          toast(`오프라인 삭제 실패: ${error.message}`, { error: true });
+        }
       });
       item.append(delBtn);
     }
@@ -967,10 +1034,15 @@ function buildEpisodeItem(chapter) {
     del.setAttribute('aria-label', `${chapter.title || '이 화'} 서재에서 지우기`);
     del.textContent = '✕';
     del.addEventListener('click', async () => {
-      await library.deleteChapter(chapter.id);
-      await refreshSaved();
-      renderEpisodeList();
-      toast('서재에서 지웠습니다.');
+      try {
+        await library.deleteChapter(chapter.id);
+        await refreshSaved();
+        renderEpisodeList();
+        toast('서재에서 지웠습니다.');
+      } catch (error) {
+        console.warn('[서재] 오프라인 파일 삭제 실패', error);
+        toast(`오프라인 삭제 실패: ${error.message}`, { error: true });
+      }
     });
     item.append(del);
   }
@@ -1056,7 +1128,7 @@ async function submitImport() {
     try {
       setBusy(true, '페이지에서 만화 찾는 중…');
       const harvested = await UrlHarvester.fetchFromUrl(raw);
-      addChapter(harvested, 'import');
+      await addChapter(harvested, 'import');
       el.rawInput.value = '';
       closeModal(el.modalImport);
       toast(`${harvested.pages.length}장 불러왔습니다.`);
@@ -1078,10 +1150,14 @@ async function submitImport() {
     return;
   }
 
-  addChapter({ title: '붙여넣은 만화', targetUrl: null, pages }, 'paste');
-  el.rawInput.value = '';
-  closeModal(el.modalImport);
-  toast(`${pages.length}장 불러왔습니다.`);
+  try {
+    await addChapter({ title: '붙여넣은 만화', targetUrl: null, pages }, 'paste');
+    el.rawInput.value = '';
+    closeModal(el.modalImport);
+    toast(`${pages.length}장 불러왔습니다.`);
+  } catch (error) {
+    toast(`저장 실패: ${error.message}`, { error: true });
+  }
 }
 
 async function handleFiles(files) {
@@ -1095,7 +1171,7 @@ async function handleFiles(files) {
       ? await UrlHarvester.loadZipOrCbzFile(files[0])
       : await UrlHarvester.loadMultipleImageFiles(files);
 
-    addChapter(result, 'local');
+    await addChapter(result, 'local');
     closeModal(el.modalFiles);
     toast(`${result.pages.length}장 불러왔습니다.`);
   } catch (err) {
@@ -1124,7 +1200,7 @@ async function consumePendingImport() {
       return false;
     }
 
-    addChapter(harvested, 'import');
+    await addChapter(harvested, 'import');
     toast(`${harvested.pages.length}장 불러왔습니다.`);
     return true;
   } catch (err) {
@@ -1298,7 +1374,7 @@ function wireEvents() {
     openModal(el.modalLinkManage);
   });
 
-  el.btnApplyLinkFix.addEventListener('click', () => {
+  el.btnApplyLinkFix.addEventListener('click', async () => {
     const oldDomain = el.oldDomainInput.value.trim();
     const newDomain = el.newDomainInput.value.trim();
 
@@ -1307,11 +1383,18 @@ function wireEvents() {
       return;
     }
 
+    const previous = state.chapters;
     state.chapters = updateChapterDomain(state.chapters, oldDomain, newDomain);
-    saveRecentChapters(state.chapters);
-    toast('주소를 성공적으로 일괄 업데이트하였습니다.');
-    closeModal(el.modalLinkManage);
-    renderEpisodeList();
+    try {
+      await persistCatalogItems(state.chapters);
+      saveRecentChapters(state.chapters);
+      toast('주소를 성공적으로 일괄 업데이트하였습니다.');
+      closeModal(el.modalLinkManage);
+      renderEpisodeList();
+    } catch (error) {
+      state.chapters = previous;
+      toast(`주소 저장 실패: ${error.message}`, { error: true });
+    }
   });
 
   /* 불러오기 */
@@ -1547,55 +1630,66 @@ async function registerServiceWorker() {
   }
 }
 
-async function loadLibraryIntoList() {
-  await refreshSaved();
+async function loadCatalogIntoList() {
+  const savedRows = await library.listChapters();
+  state.saved = new Map(savedRows.map((row) => [row.id, row]));
 
-  const restoredSaved = [...state.saved.values()].map((row) => ({
-    id: row.id,
-    title: row.title,
-    label: row.label || '담아둔 화',
-    pages: row.pages,
-    sourceUrl: row.sourceUrl,
-    prevUrl: row.prevUrl,
-    nextUrl: row.nextUrl,
-  }));
-
-  const recentList = readRecentChapters();
-  const recentDbList = await library.readRecentChaptersFromDb();
-
-  // 복원된 챕터를 목록에 병합 (id와 sourceUrl 보존)
-  for (const item of [...restoredSaved, ...recentList, ...recentDbList]) {
-    if (!item?.pages || item.pages.length === 0) continue;
-
-    // upsertChapter는 harvested.targetUrl로 기존 챕터를 찾으므로
-    // sourceUrl을 targetUrl로도 설정해줘야 중복 방지가 작동한다
-    item.targetUrl = item.sourceUrl;
-
-    // 이미 같은 id가 목록에 있으면 건너뛴다 (데모와 겹치지 않는 한)
-    const alreadyExists = state.chapters.some((c) => c.id === item.id && !c.isDemo);
-    if (alreadyExists) continue;
-
-    const { chapters } = upsertChapter(state.chapters, item, item.id);
-    state.chapters = chapters;
+  if (await getKv('migration.v1') !== 'complete') {
+    const [existing, recentDbList] = await Promise.all([
+      listCatalogItems(),
+      library.readRecentChaptersFromDb(),
+    ]);
+    const merged = mergeLegacyCatalog(
+      existing,
+      savedRows,
+      recentDbList,
+      readRecentChaptersForMigration()
+    ).map((item) => catalogItem(item));
+    await writeMigrationV1(merged);
   }
+
+  state.chapters = (await listCatalogItems()).filter(
+    (item) => item?.id && Array.isArray(item.pages) && !item.isDemo
+  );
+}
+
+function showStorageFailure(error) {
+  console.error('[저장소] 카탈로그를 복구하지 못했습니다', error);
+  document.getElementById('app').classList.add('is-empty');
+  const title = document.querySelector('#empty-state h2');
+  const hint = document.querySelector('#empty-state .hint');
+  if (title) title.textContent = '저장소를 읽지 못했습니다';
+  if (hint) hint.textContent = '앱을 업데이트하거나 데이터를 지우지 말고 다시 실행해 주세요.';
+  document.querySelectorAll('#empty-state button').forEach((button) => {
+    button.disabled = true;
+  });
 }
 
 async function boot() {
-  // 롤백 타이머(10초)보다 먼저 — 서재 복원이 느리거나 실패해도 번들이 사형당하지 않게
-  confirmBundleReady().catch((err) => console.warn('[OTA] ready 신고 실패', err));
+  // 데이터와 무관하게 즉시 시작한다. 적용은 ready + 저장 flush 성공 뒤에만 한다.
+  const ready = confirmBundleReady();
 
   try {
     await bootApp();
   } catch (err) {
-    // 부팅이 죽어도 OTA 확인은 살려둔다 — 고장난 번들도 다음 배포로 자가치유되게
-    console.error('[부팅] 초기화 실패', err);
+    showStorageFailure(err);
+    await ready.catch((readyError) => console.warn('[OTA] ready 신고 실패', readyError));
+    return;
   }
 
-  // 실패해도 현재 번들은 정상 사용한다. 성공하면 서명된 새 번들로 한 번 재시작한다.
-  finishStartupAndApplyUpdate().catch((err) => console.warn('[OTA] 업데이트 확인 실패', err));
+  try {
+    await ready;
+    await flushStateWrites();
+    await finishStartupAndApplyUpdate({ beforeReload: flushStateWrites });
+  } catch (err) {
+    console.warn('[OTA] 업데이트 적용 중단', err);
+  }
 }
 
 async function bootApp() {
+  await restoreStateFromKv(state);
+  await loadCatalogIntoList();
+
   initEngine();
   applySettingsToUI();
   wireEvents();
@@ -1609,47 +1703,40 @@ async function bootApp() {
   library.requestPersistence().catch(() => {});
   registerServiceWorker();
 
-  try {
-    await loadLibraryIntoList();
-  } catch (err) {
-    console.warn('[부팅] loadLibraryIntoList 실패:', err);
-  }
-
   window.addEventListener('hashchange', () => {
     if (/[#&]import=/.test(window.location.hash)) consumePendingImport();
   });
 
   const imported = await consumePendingImport().catch(() => null);
 
-    const hasInitialized = localStorage.getItem('mangaViewer.hasInitialized');
-    if (!imported && !hasInitialized && state.chapters.length === 0) {
-      localStorage.setItem('mangaViewer.hasInitialized', 'true');
-      const onepiece = SAMPLE_MANGA_SERIES.episodes.find((e) => e.id === 'sample-onepiece-909');
-      if (onepiece) {
-        state.chapters = [onepiece];
-        saveRecentChapters(state.chapters);
-      }
-    } else {
-      localStorage.setItem('mangaViewer.hasInitialized', 'true');
+  if (!imported && !state.initialized && state.chapters.length === 0) {
+    const onepiece = SAMPLE_MANGA_SERIES.episodes.find((e) => e.id === 'sample-onepiece-909');
+    if (onepiece) {
+      state.chapters = [onepiece];
+      await putCatalogItem(catalogItem(onepiece, true));
+      saveRecentChapters(state.chapters);
     }
+  }
+  state.initialized = true;
+  saveInitialized(true);
 
-    const lastId = readLastChapterId();
-    const targetChapter =
-      state.chapters.find((c) => c.id === lastId) ||
-      state.chapters.find((c) => state.saved.has(c.id)) ||
-      state.chapters[0];
+  const lastId = readLastChapterId();
+  const targetChapter =
+    state.chapters.find((c) => c.id === lastId) ||
+    state.chapters.find((c) => state.saved.has(c.id)) ||
+    state.chapters[0];
 
-    if (targetChapter) {
-      try {
-        await openChapter(targetChapter.id);
-      } catch (e) {
-        console.warn('openChapter 초기 실행 오류:', e);
-      }
-      renderEpisodeList();
-      openModal(el.modalEpisodes);
-    } else {
-      showEmptyState();
+  if (targetChapter) {
+    try {
+      await openChapter(targetChapter.id);
+    } catch (e) {
+      console.warn('openChapter 초기 실행 오류:', e);
     }
+    renderEpisodeList();
+    openModal(el.modalEpisodes);
+  } else {
+    showEmptyState();
+  }
 
   showChrome();
 

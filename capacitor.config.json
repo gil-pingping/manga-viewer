@@ -4,6 +4,10 @@
   "webDir": "dist",
   "loggingBehavior": "production",
   "backgroundColor": "#0b0c0e",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https"
+  },
   "android": {
     "allowMixedContent": true,
     "webContentsDebuggingEnabled": true
