@@ -1,0 +1,39 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>테스트 목업 - 회차 목록</title></head><body style="margin:0;background:#111;color:#eee">
+  <!--
+    회차 목록 페이지 픽스처.
+
+    실제 사이트(뉴토키 실측 포함)를 닮게 일부러 섞어뒀다:
+      1. 첫 회차에는 썸네일 링크가 하나 더 붙는다 (같은 주소 → 한 줄로 합쳐져야 한다)
+      2. 사이드바에 다른 작품 추천이 있고 그것도 "350화" 같은 번호를 달고 있다
+         (최다 디렉터리 규칙으로 빠져야 한다)
+      3. 회차 제목 뒤에 댓글 수 배지가 붙는다 ("후기" + 배지 1 이 1화로 오인되면 안 된다)
+      4. 에필로그 1화는 본편 1화와 번호가 같다 (본편을 지우지 말고 "에필로그 1화"로 남아야 한다)
+  -->
+  <h1>테스트 목업</h1>
+  <img src="/img/logo_site.svg" width="240" height="240" alt="">
+
+  <ul>
+    <li><a href="./index.html?ch=1"><img src="/img/logo_site.svg" width="60" height="60" alt=""></a><a href="./index.html?ch=1">1화</a></li>
+    <li><a href="./index.html?ch=2">2화</a></li>
+    <li><a href="./index.html?ch=3">3화</a></li>
+    <li><a href="./index.html?ch=4">4화</a></li>
+    <li><a href="./index.html?ch=5">5화</a></li>
+    <li><a href="./index.html?ch=6">6화</a></li>
+    <li><a href="./index.html?ch=7">7화</a></li>
+    <li><a href="./index.html?ch=8">8화</a></li>
+    <li><a href="./index.html?ch=9">9화</a></li>
+    <li><a href="./index.html?ch=10">10화</a></li>
+    <li><a href="./index.html?ch=11">11화</a></li>
+    <li><a href="./index.html?ch=12">12화 <span class="title-metric is-comment">3</span></a></li>
+    <li><a href="./index.html?ch=13">에필로그 1화</a></li>
+    <li><a href="./index.html?ch=14">후기 <span class="title-metric is-comment">1</span></a></li>
+  </ul>
+
+  <aside>
+    <h2>인기작</h2>
+    <a href="/other/99/5501">350화</a>
+    <a href="/other/77/2201">12화</a>
+    <a href="/notice">공지사항</a>
+  </aside>
+</body></html>

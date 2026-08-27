@@ -1,6 +1,6 @@
 {
   "name": "manga-viewer",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
     "android:build": "npm run android:sync && node scripts/android-task.mjs build",
     "android:open": "cap open android",
     "android:run": "npm run android:sync && node scripts/android-task.mjs run",
-    "test": "node test/series-check.mjs && node test/image-rules-check.mjs && node test/layout-check.mjs && node test/chapter-nav-check.mjs && node test/bookmarklet-check.mjs && node test/proxy-guard-check.mjs && node test/harvester-check.mjs && node test/anilife-collector-check.mjs && node test/anilife-media-check.mjs && node test/library-check.mjs && node test/catalog-store-check.mjs && node test/persistence-integration-check.mjs && node test/native-http-check.mjs && node test/ota-check.mjs"
+    "test": "node test/series-check.mjs && node test/episode-links-check.mjs && node test/image-rules-check.mjs && node test/layout-check.mjs && node test/chapter-nav-check.mjs && node test/bookmarklet-check.mjs && node test/proxy-guard-check.mjs && node test/harvester-check.mjs && node test/anilife-collector-check.mjs && node test/anilife-media-check.mjs && node test/library-check.mjs && node test/catalog-store-check.mjs && node test/persistence-integration-check.mjs && node test/native-http-check.mjs && node test/ota-check.mjs"
   },
   "devDependencies": {
     "@capacitor/android": "^8.5.0",

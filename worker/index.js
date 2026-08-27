@@ -178,10 +178,19 @@ async function handleProxyImage(request) {
     return textError(502, '이미지 대신 HTML이 돌아왔습니다. 링크가 만료되었을 수 있습니다.');
   }
 
+  /**
+   * 컷을 .css/.woff 위장 주소로 서빙하는 사이트(뉴토키 실측: content-type 이
+   * text/css 인 진짜 이미지 바이트)가 있다. 여기는 이미지 전용 엔드포인트다 —
+   * image/* 가 아니면 image/jpeg 로 바꿔 단다. 브라우저는 실제 바이트로
+   * 디코더를 고르므로 webp 여도 렌더된다. 위장 content-type 을 그대로 두면
+   * nosniff 와 만나 <img> 를 막는 브라우저가 있다.
+   */
+  const safeType = contentType.startsWith('image/') ? contentType : 'image/jpeg';
+
   return new Response(upstream.body, {
     status: 200,
     headers: {
-      'Content-Type': contentType || 'image/jpeg',
+      'Content-Type': safeType,
       // 원격 SVG 등이 같은 오리진 문서로 실행되지 않게 막는다
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': "default-src 'none'; sandbox",

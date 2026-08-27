@@ -476,7 +476,9 @@ export default function mangaProxyPlugin() {
           }
 
           res.writeHead(200, {
-            'Content-Type': contentType || 'image/jpeg',
+            // 위장 확장자 컷(text/css 로 오는 진짜 이미지 — 뉴토키 실측)도
+            // 이미지 엔드포인트답게 image/* 로 내보낸다. 디코더는 바이트로 골라진다.
+            'Content-Type': contentType.startsWith('image/') ? contentType : 'image/jpeg',
             'Content-Length': buffer.length,
             'Access-Control-Allow-Origin': '*',
             'Cache-Control': 'public, max-age=86400',

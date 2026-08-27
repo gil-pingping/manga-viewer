@@ -70,6 +70,86 @@ check('네이버: source 태그로 온 mp3 는 이미지가 아니다', () => {
   assert.equal(got.filter((u) => u.endsWith('.mp3')).length, 0);
 });
 
+check('위장 확장자: 실제로 그려진 <img> 는 .css/.woff 여도 컷이다 (뉴토키 실측)', () => {
+  // 뉴토키는 컷 바이트를 .css/.woff 주소로 서빙한다. naturalWidth>0 이면
+  // 브라우저가 이미지로 디코드했다는 증거 — 확장자보다 우선한다.
+  const slot = (i, ext) => ({
+    tag: 'IMG',
+    src: `https://cdn.test/hide/${1000 + i}.${ext}`,
+    naturalWidth: 720,
+    naturalHeight: 1500,
+    pageIndex: i,
+  });
+  const elements = [slot(1, 'css'), slot(2, 'woff'), slot(3, 'css'), slot(4, 'jpg')];
+  const got = selectContentImages(elements, 'https://site.test/view/1');
+  assert.equal(got.length, 4, '위장 확장자 컷이 빠졌다');
+});
+
+check('번호 선언된 컷은 서명 URL 이 junk 조각에 우연히 걸려도 산다', () => {
+  // 뉴토키 실측: 서명 URL 랜덤 토큰이 "sns"·"ad-" 같은 짧은 junk 조각에
+  // 회마다 한두 장씩 우연히 매치돼 컷이 사라졌다. 번호 선언이 이름 추측을 이긴다.
+  const el = (i, name) => ({
+    tag: 'IMG',
+    src: `https://cdn.test/signed/${name}`,
+    naturalWidth: 720,
+    naturalHeight: 1500,
+    pageIndex: i,
+  });
+  const got = selectContentImages(
+    [el(1, 'Xsns9f2.jpg'), el(2, 'Kad-77q.jpg'), el(3, 'plain01.jpg'), el(4, 'plain02.jpg')],
+    'https://site.test/view/1'
+  );
+  assert.equal(got.length, 4, 'junk 우연 매치로 컷이 빠졌다');
+});
+
+check('번호 선언이 3개 미만이면 junk 이름은 여전히 걸러진다', () => {
+  // 배너 캐러셀이 data-index 한두 개 달았다고 본문 취급하면 안 된다
+  const got = selectContentImages(
+    [
+      { tag: 'IMG', src: 'https://ads.test/banner-1.jpg', naturalWidth: 728, naturalHeight: 400, pageIndex: 1 },
+      { tag: 'IMG', src: 'https://cdn.test/c/p01.jpg', naturalWidth: 720, naturalHeight: 1500, pageIndex: null },
+      { tag: 'IMG', src: 'https://cdn.test/c/p02.jpg', naturalWidth: 720, naturalHeight: 1500, pageIndex: null },
+      { tag: 'IMG', src: 'https://cdn.test/c/p03.jpg', naturalWidth: 720, naturalHeight: 1500, pageIndex: null },
+    ],
+    'https://site.test/view/1'
+  );
+  assert.ok(!got.some((u) => u.includes('banner')), '배너가 본문에 섞였다');
+});
+
+check('페이지 번호가 선언된 슬롯은 lazy 로 아직 안 그려졌어도 컷이다', () => {
+  // 뉴토키 실측: 스크롤 후에도 마지막 컷 몇 장은 디코드 전(naturalWidth=0)이다.
+  // data-theme-page 가 있으면 수집 타이밍과 무관하게 살아야 한다.
+  const el = (i, ext, nw) => ({
+    tag: 'IMG',
+    src: `https://cdn.test/hide/${1000 + i}.${ext}`,
+    naturalWidth: nw,
+    naturalHeight: nw ? 1500 : 0,
+    pageIndex: i,
+  });
+  const got = selectContentImages(
+    [el(1, 'jpg', 720), el(2, 'css', 0), el(3, 'json', 0), el(4, 'jpg', 720)],
+    'https://site.test/view/1'
+  );
+  assert.equal(got.length, 4, '번호 선언된 미로드 컷이 빠졌다');
+});
+
+check('위장 확장자라도 렌더·번호 증거가 둘 다 없으면 여전히 거른다', () => {
+  const el = (i, ext, nw) => ({
+    tag: 'IMG',
+    src: `https://cdn.test/hide/${1000 + i}.${ext}`,
+    naturalWidth: nw,
+    naturalHeight: nw ? 1500 : 0,
+    pageIndex: null,
+  });
+  // css 인데 안 그려졌고 번호도 없다 → 진짜 스타일시트일 수 있다 → 버린다
+  const got = selectContentImages(
+    [el(1, 'css', 0), el(2, 'jpg', 720), el(3, 'jpg', 720), el(4, 'jpg', 720)],
+    'https://site.test/view/1'
+  );
+  assert.equal(got.filter((u) => u.endsWith('.css')).length, 0);
+  assert.equal(got.length, 3);
+});
+
 check('네이버: 같은 폴더에 섞인 썸네일도 빠진다', () => {
   const got = selectContentImages(NAVER_WEBTOON.elements, NAVER_WEBTOON.pageUrl);
   assert.equal(got.filter((u) => /thumbnail/i.test(u)).length, 0);

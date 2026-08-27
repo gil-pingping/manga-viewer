@@ -269,6 +269,56 @@ export function extractSeriesCover(doc, baseUrl) {
   return null;
 }
 
+/**
+ * 문서의 링크를 서술자로 옮긴다. 어느 링크가 회차인지는 판단하지 않는다 —
+ * 그 판단은 `core/series.js` 의 `selectEpisodeLinks` 가 한다.
+ * (이미지 쪽의 `collectDescriptors` → `selectContentImages` 와 같은 구조다.)
+ *
+ * @returns {Array<{href: string, text: string}>} 주소는 절대 주소로 맞춘다
+ */
+/**
+ * 회차 링크 안에 붙는 댓글 수·조회수 배지의 class 표식.
+ * 뉴토키 실측: "헬퍼 후기<span class="…title-metric is-comment">1</span>" 의
+ * textContent 가 "헬퍼 후기 1" 이 되어 후기가 1화로 오인됐다. 제목이 아닌
+ * 텍스트는 읽기 전에 떼어낸다.
+ */
+const LINK_METRIC_CLASS = /metric|comment|count|badge|reply/i;
+
+/** 배지를 뗀 링크 텍스트. cloneNode 가 없는 환경이면 원문 그대로 쓴다 */
+function linkText(anchor) {
+  let node = anchor;
+  if (typeof anchor.cloneNode === 'function' && typeof anchor.querySelectorAll === 'function') {
+    const clone = anchor.cloneNode(true);
+    for (const el of clone.querySelectorAll('[class]')) {
+      if (LINK_METRIC_CLASS.test(el.getAttribute('class') || '') && typeof el.remove === 'function') {
+        el.remove();
+      }
+    }
+    node = clone;
+  }
+  return (node.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+export function collectLinkDescriptors(doc, baseUrl) {
+  if (!doc) return [];
+
+  const out = [];
+  for (const anchor of doc.querySelectorAll('a[href]')) {
+    const raw = anchor.getAttribute('href') || '';
+    if (!raw || raw.startsWith('#') || /^(javascript|mailto|tel):/i.test(raw)) continue;
+
+    let href;
+    try {
+      href = new URL(raw, baseUrl).href;
+    } catch {
+      continue;
+    }
+
+    out.push({ href, text: linkText(anchor) });
+  }
+  return out;
+}
+
 /** 회차 페이지에서 해당 작품의 메인 목록 페이지 URL 추출 */
 export function findSeriesListUrl(doc, currentUrl) {
   if (!doc) return null;

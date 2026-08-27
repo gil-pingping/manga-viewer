@@ -441,6 +441,39 @@ function prefetchNextChapter(chapter) {
 }
 
 /**
+ * 사이트가 알려준 전 회차 목록. 작품 이름으로 찾는다.
+ *
+ * 일부러 저장하지 않는다. 두 가지 이유가 있다:
+ *  1. 새 화를 불러오려면 어차피 네트워크가 필요하다 — 온라인이면 같은 작품의
+ *     아무 화를 열 때 목록이 공짜로 다시 채워진다.
+ *  2. 챕터 레코드에 실으면 `saveRecentChapters` 의 필드 화이트리스트에서
+ *     조용히 사라지고(v1.5.x 가 물린 함정), 회차 수백 개가 챕터마다 중복돼
+ *     localStorage 용량을 넘긴다.
+ */
+const seriesEpisodeLinks = new Map();
+
+function rememberEpisodeLinks(harvested, chapter) {
+  const links = harvested?.episodeLinks;
+  if (!Array.isArray(links) || links.length === 0) return;
+  const { seriesTitle } = parseSeriesAndEpisode(chapter.title || '');
+  seriesEpisodeLinks.set(seriesTitle, links);
+}
+
+/** 회차 목록에서 아직 안 불러온 화를 눌렀을 때 */
+async function loadEpisodeUrl(url) {
+  try {
+    setBusy(true, '회차 불러오는 중…');
+    const harvested = await UrlHarvester.fetchFromUrl(url);
+    await addChapter(harvested, 'import');
+    toast(`${harvested.pages.length}장 불러왔습니다.`);
+  } catch (err) {
+    toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
+  } finally {
+    setBusy(false);
+  }
+}
+
+/**
  * 새로 수집한 챕터를 목록 맨 앞에 넣고 바로 연다.
  * 같은 출처를 다시 불러오면 새로 만들지 않고 갱신한다.
  */
@@ -451,6 +484,7 @@ async function addChapter(harvested, idPrefix) {
     `${idPrefix}-${Date.now()}`
   );
   state.chapters = chapters;
+  rememberEpisodeLinks(harvested, chapter);
   saveRecentChapters(chapters);
   await persistCatalogItem(chapter);
 
@@ -1105,6 +1139,59 @@ function renderSeriesChaptersView(group) {
   }
 
   container.append(header, list);
+
+  /**
+   * 사이트가 준 전 회차 목록.
+   *
+   * 여기가 없을 때는 "다음화"로만 진도를 낼 수 있었다 — 87화로 바로 가려면
+   * 주소를 직접 붙여넣는 수밖에 없었다. 사이트가 목록을 안 주면(회차 링크가
+   * 2개 이하) 이 구역은 아예 그리지 않는다. 없는 걸 있는 척하지 않는다.
+   */
+  const siteLinks = seriesEpisodeLinks.get(group.seriesTitle) || [];
+  if (siteLinks.length > 0) {
+    const loadedByUrl = new Map(
+      group.chapters.filter((c) => c.sourceUrl).map((c) => [c.sourceUrl, c])
+    );
+
+    const sectionTitle = document.createElement('div');
+    sectionTitle.className = 'shelf-ep-section';
+    sectionTitle.textContent = `사이트 전체 회차 ${siteLinks.length}화 · 불러옴 ${loadedByUrl.size}`;
+
+    const siteList = document.createElement('div');
+    siteList.className = 'shelf-ep-list';
+
+    for (const link of siteLinks) {
+      const loaded = loadedByUrl.get(link.url);
+
+      const row = document.createElement('div');
+      row.className = `shelf-ep-item${loaded ? '' : ' is-remote'}`;
+
+      const info = document.createElement('div');
+      const rowTitle = document.createElement('span');
+      rowTitle.className = 'shelf-ep-title';
+      rowTitle.textContent = link.label;
+
+      const rowMeta = document.createElement('span');
+      rowMeta.className = 'shelf-ep-meta';
+      rowMeta.textContent = loaded ? '불러옴' : '누르면 불러오기';
+
+      info.append(rowTitle, rowMeta);
+      row.append(info);
+
+      row.addEventListener('click', async () => {
+        closeModal(el.modalEpisodes);
+        if (loaded) {
+          openCatalogItem(loaded);
+          return;
+        }
+        await loadEpisodeUrl(link.url);
+      });
+
+      siteList.appendChild(row);
+    }
+
+    container.append(sectionTitle, siteList);
+  }
 
   el.epList.className = 'ep-list';
   el.epList.replaceChildren(container);

@@ -5,7 +5,14 @@ import {
   NOT_IMAGE_EXT,
   JUNK_PATTERN,
 } from './core/imageRules.js';
-import { collectDescriptors, looksJsRendered, extractSeriesCover, findSeriesListUrl } from './collect/fromDocument.js';
+import {
+  collectDescriptors,
+  looksJsRendered,
+  extractSeriesCover,
+  findSeriesListUrl,
+  collectLinkDescriptors,
+} from './collect/fromDocument.js';
+import { selectEpisodeLinks, findListPageUrls } from './core/series.js';
 import { fetchPageDocument, isNativeApp } from './platform/nativeHttp.js';
 import { collectRenderedPage } from './platform/pageCollector.js';
 
@@ -129,7 +136,11 @@ export class UrlHarvester {
      */
     if (looksJsRendered(doc)) {
       // 서버가 실제 브라우저로 열어 렌더된 DOM 을 읽는다. 주소 하나로 끝난다.
-      return await UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
+      // 정적 HTML 에도 표지·회차 목록은 실려 있다 — 버리지 않고 같이 걷는다.
+      // 단, 무음 사전 수집은 목록을 쓰지 않으므로 목록 페이지 fetch 를 아낀다.
+      return silentRenderedFallback
+        ? UrlHarvester.renderFromUrl(targetUrl, { silent: true })
+        : UrlHarvester.renderWithSeriesExtras(targetUrl, doc);
     }
 
     // DOM → 서술자 → 규칙. 규칙 자체는 core 에만 있다
@@ -138,7 +149,9 @@ export class UrlHarvester {
 
     // 정적 HTML 에 광고·placeholder 1~2장만 있고 실제 컷은 렌더 뒤 생기는 사이트가 있다.
     if (isNativeApp() && imageUrls.length < 3) {
-      return UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
+      return silentRenderedFallback
+        ? UrlHarvester.renderFromUrl(targetUrl, { silent: true })
+        : UrlHarvester.renderWithSeriesExtras(targetUrl, doc);
     }
 
     if (imageUrls.length === 0) {
@@ -152,22 +165,10 @@ export class UrlHarvester {
       throw err;
     }
 
-    let seriesCover = extractSeriesCover(doc, targetUrl);
-    if (!seriesCover) {
-      const listUrl = findSeriesListUrl(doc, targetUrl);
-      if (listUrl) {
-        try {
-          const listRes = await fetchPageDocument(listUrl);
-          if (listRes.ok) {
-            const listHtml = await listRes.text();
-            const listDoc = new DOMParser().parseFromString(listHtml, 'text/html');
-            seriesCover = extractSeriesCover(listDoc, listUrl);
-          }
-        } catch (e) {
-          console.warn('메인 목록 페이지 표지 추출 중 오류:', e);
-        }
-      }
-    }
+    const { seriesCover, episodeLinks } = await UrlHarvester.harvestSeriesExtras(doc, targetUrl, {
+      // 무음 사전 수집은 회차 목록을 쓰지 않는다 — 쪽 넘김 fetch 를 아낀다
+      followPagination: !silentRenderedFallback,
+    });
 
     return {
       title: cleanTitle(doc.title),
@@ -180,7 +181,96 @@ export class UrlHarvester {
         findAdjacentLink(doc, /다음화|다음\s*화|next/i, parsedUrl.origin, targetUrl) ||
         bumpEpisodeParam(targetUrl, +1),
       pages: toPages(imageUrls, targetUrl),
+      episodeLinks,
     };
+  }
+
+  /**
+   * 회차 페이지/목록 페이지에서 표지와 전 회차 목록을 걷는다.
+   *
+   * 회차 페이지 자체에 전 회차 목록을 달아두는 사이트가 많다. 있으면 공짜다.
+   * 없으면 목록 페이지를 받는다 — 표지 때문에 어차피 한 번 받는 문서다.
+   */
+  static async harvestSeriesExtras(doc, targetUrl, { seriesCover = null, followPagination = true } = {}) {
+    if (!seriesCover) seriesCover = extractSeriesCover(doc, targetUrl);
+    let episodeLinks = selectEpisodeLinks(collectLinkDescriptors(doc, targetUrl));
+
+    if (!seriesCover || episodeLinks.length === 0) {
+      const listUrl = findSeriesListUrl(doc, targetUrl);
+      if (listUrl) {
+        try {
+          const listRes = await fetchPageDocument(listUrl);
+          if (listRes.ok) {
+            const listHtml = await listRes.text();
+            const listDoc = new DOMParser().parseFromString(listHtml, 'text/html');
+            if (!seriesCover) seriesCover = extractSeriesCover(listDoc, listUrl);
+            if (episodeLinks.length === 0) {
+              episodeLinks = followPagination
+                ? await UrlHarvester.collectEpisodeLinksAcrossPages(listDoc, listUrl)
+                : selectEpisodeLinks(collectLinkDescriptors(listDoc, listUrl));
+            }
+          }
+        } catch (e) {
+          console.warn('메인 목록 페이지 표지·회차 추출 중 오류:', e);
+        }
+      }
+    }
+
+    return { seriesCover, episodeLinks };
+  }
+
+  /**
+   * 목록이 여러 쪽으로 나뉜 사이트의 나머지 쪽까지 걷는다.
+   *
+   * 뉴토키 실측: 189화짜리 작품의 첫 쪽에 100화만 실리고 7~88화는 ?epage=2
+   * 에 있었다 — 첫 쪽만 읽으면 중간 회차가 통째로 빠진다. 링크를 전부 합친
+   * 뒤 한 번에 선별해야 최다 디렉터리·중복 규칙이 전체 기준으로 돈다.
+   */
+  static async collectEpisodeLinksAcrossPages(listDoc, listUrl) {
+    let links = collectLinkDescriptors(listDoc, listUrl);
+    const visited = new Set([listUrl]);
+    const queue = findListPageUrls(links, listUrl);
+
+    // ponytail: 최대 30쪽 캡 — 3000화급 초장편은 그 뒤가 잘린다. 필요해지면 캡만 올린다.
+    while (queue.length > 0 && visited.size <= 30) {
+      const pageUrl = queue.shift();
+      if (visited.has(pageUrl)) continue;
+      visited.add(pageUrl);
+      try {
+        const res = await fetchPageDocument(pageUrl);
+        if (!res.ok) continue;
+        const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+        const pageLinks = collectLinkDescriptors(doc, pageUrl);
+        links = links.concat(pageLinks);
+        // "1 2 3 …" 처럼 근처 쪽 번호만 보여주는 사이트는 새 쪽에서 다시 찾아야 끝까지 간다
+        for (const nextUrl of findListPageUrls(pageLinks, listUrl)) {
+          if (!visited.has(nextUrl) && !queue.includes(nextUrl)) queue.push(nextUrl);
+        }
+      } catch {
+        /* 한 쪽을 못 받아도 나머지 쪽은 살린다 */
+      }
+    }
+
+    return selectEpisodeLinks(links);
+  }
+
+  /**
+   * 렌더 경로로 컷을 걷되, 이미 받아둔 정적 HTML 의 표지·회차 목록은 버리지
+   * 않는다. 뉴토키처럼 컷만 JS 로 채우는 사이트는 목록이 정적 HTML 에 있다 —
+   * 예전엔 렌더 경로로 빠지며 목록을 통째로 잃었다.
+   */
+  static async renderWithSeriesExtras(targetUrl, doc, { silent = false } = {}) {
+    const rendered = await UrlHarvester.renderFromUrl(targetUrl, { silent });
+    try {
+      const extras = await UrlHarvester.harvestSeriesExtras(doc, targetUrl, {
+        seriesCover: rendered.coverUrl,
+      });
+      if (!rendered.coverUrl && extras.seriesCover) rendered.coverUrl = extras.seriesCover;
+      if (extras.episodeLinks.length > 0) rendered.episodeLinks = extras.episodeLinks;
+    } catch {
+      /* 회차 목록은 부가 정보 — 실패해도 본문 수집을 막지 않는다 */
+    }
+    return rendered;
   }
 
   /**

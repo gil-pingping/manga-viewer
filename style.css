@@ -1706,6 +1706,26 @@ select.field {
   color: var(--text-muted);
 }
 
+/* 회차 목록 안의 구분 제목 ("사이트 전체 회차") */
+.shelf-ep-section {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* 아직 안 불러온 회차 — 누르면 받아온다. 불러온 것과 눈에 구분되게 낮춘다 */
+.shelf-ep-item.is-remote {
+  background: transparent;
+  border-style: dashed;
+}
+
+.shelf-ep-item.is-remote .shelf-ep-title {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 .shelf-refresh-btn {
   position: absolute;
   top: 8px;

@@ -333,6 +333,13 @@ export function explainSelection(elements, baseUrl) {
   const picked = [];
   const entries = [];
 
+  // selectContentImages 와 같은 판정: 번호 선언 3개 이상이면 선언을 믿는다
+  let declaredPages = 0;
+  for (let i = 0; i < elements.length; i++) {
+    if (typeof elements[i].pageIndex === 'number') declaredPages++;
+  }
+  const trustDeclared = declaredPages >= 3;
+
   for (let i = 0; i < elements.length; i++) {
     const el = elements[i];
     const label = (el.src || el.dataSrc || el.dataOriginal || el.bgImage || '(빈 요소)').slice(0, 90);
@@ -347,11 +354,13 @@ export function explainSelection(elements, baseUrl) {
       stages['주소불가'].push(label);
       continue;
     }
-    if (NOT_IMAGE_EXT.test(abs)) {
+    const declared = trustDeclared && typeof el.pageIndex === 'number';
+    const rendered = (el.naturalWidth || 0) > 0;
+    if (NOT_IMAGE_EXT.test(abs) && !rendered && !declared) {
       stages['이미지아님'].push(abs);
       continue;
     }
-    if (JUNK_PATTERN.test(abs)) {
+    if (JUNK_PATTERN.test(abs) && !declared) {
       stages['이름걸림'].push(abs);
       continue;
     }
@@ -419,6 +428,22 @@ export function selectContentImages(elements, baseUrl) {
   const seen = {};
   const entries = [];
 
+  /**
+   * 선언된 페이지 번호가 3개 이상이면 이 문서는 번호 매긴 뷰어다.
+   * 그 안에서 번호 달린 요소는 이름·확장자 휴리스틱보다 선언을 믿는다.
+   *
+   * 뉴토키 실측 두 가지가 근거다:
+   *  - 컷을 .css/.js 위장 주소로 서빙한다 → 확장자 필터가 컷을 죽인다
+   *  - 서명 URL 의 랜덤 토큰이 JUNK_PATTERN 의 짧은 조각(sns, ad- 등)에
+   *    우연히 걸린다 → 회마다 다른 컷이 한두 장씩 사라진다
+   * 반대로 실제로 그려진 이미지(naturalWidth>0)도 확장자 필터보다 우선한다.
+   */
+  let declaredPages = 0;
+  for (let i = 0; i < elements.length; i++) {
+    if (typeof elements[i].pageIndex === 'number') declaredPages++;
+  }
+  const trustDeclared = declaredPages >= 3;
+
   for (let i = 0; i < elements.length; i++) {
     const el = elements[i];
 
@@ -428,8 +453,12 @@ export function selectContentImages(elements, baseUrl) {
     const abs = absolutize(raw, baseUrl);
     if (!abs) continue;
 
-    if (NOT_IMAGE_EXT.test(abs)) continue; // mp3 등이 <source> 로 섞여 들어온다
-    if (JUNK_PATTERN.test(abs)) continue;
+    const declared = trustDeclared && typeof el.pageIndex === 'number';
+    const rendered = (el.naturalWidth || 0) > 0;
+
+    // mp3 등이 <source> 로 섞여 들어온다 (위 주석의 예외 두 가지 제외)
+    if (NOT_IMAGE_EXT.test(abs) && !rendered && !declared) continue;
+    if (JUNK_PATTERN.test(abs) && !declared) continue;
     if (!isBigEnough(el)) continue;
 
     const url = upgradeResolution(abs);
