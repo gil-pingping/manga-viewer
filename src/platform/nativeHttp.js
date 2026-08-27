@@ -6,6 +6,7 @@ import {
   pageRequestHeaders,
 } from '../shared/proxyRules.js';
 import { OTA_ORIGIN } from '../core/otaManifest.js';
+import { BUILT_IN_PROXY_TOKEN } from '../generated/proxyToken.js';
 import {
   ANILIFE_API_ORIGIN,
   ANILIFE_ORIGIN,
@@ -139,10 +140,11 @@ export async function readRangedNativeBytes(request, { url, headers, range = '',
  * 설정 화면에서 한 번 넣으면 저장된다. 없으면 폴백 없이 원래 실패를 보고한다.
  */
 export function proxyAuthToken() {
+  // 설정 화면에서 직접 넣은 값이 우선, 없으면 빌드가 키체인에서 내장한 값
   try {
-    return localStorage.getItem('mv:proxyToken') || '';
+    return localStorage.getItem('mv:proxyToken') || BUILT_IN_PROXY_TOKEN || '';
   } catch {
-    return '';
+    return BUILT_IN_PROXY_TOKEN || '';
   }
 }
 

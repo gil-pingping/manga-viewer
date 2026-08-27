@@ -35,3 +35,6 @@ backups/
 .dev.vars
 .dev.vars.*
 .wrangler
+
+# 빌드가 키체인에서 생성 — 토큰 포함, 커밋 금지
+src/generated/
