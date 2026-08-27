@@ -140,6 +140,7 @@ const el = {
 
   btnEpList: $('btn-ep-list'),
   btnImport: $('btn-import'),
+  btnReload: $('btn-reload'),
   btnFiles: $('btn-files'),
   btnDisplay: $('btn-display'),
   btnSettings: $('btn-settings'),
@@ -466,6 +467,42 @@ async function loadEpisodeUrl(url) {
     const harvested = await UrlHarvester.fetchFromUrl(url);
     await addChapter(harvested, 'import');
     toast(`${harvested.pages.length}장 불러왔습니다.`);
+  } catch (err) {
+    toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
+  } finally {
+    setBusy(false);
+  }
+}
+
+/**
+ * 지금 보는 화를 원본 주소에서 통째로 다시 수집한다.
+ *
+ * 왜 필요한가: 뉴토키류는 컷 주소에 서명이 붙어 시간이 지나면 만료된다.
+ * 만료된 화는 컷이 군데군데 안 뜨는데, 저장된 주소로는 복구가 안 된다 —
+ * 원본 페이지에서 새 서명 주소를 받아와야 한다. 읽던 페이지는 유지한다.
+ */
+async function reloadCurrentChapter() {
+  const chapter = state.chapters.find((c) => c.id === state.currentId);
+  if (!chapter) {
+    toast('열려 있는 화가 없습니다.', { error: true });
+    return;
+  }
+  if (!chapter.sourceUrl) {
+    toast('원본 주소가 없는 화라 다시 수집할 수 없습니다 (로컬 파일 등).', { error: true });
+    return;
+  }
+
+  const keepPage = (engine?.currentIndex ?? 0) + 1;
+  try {
+    setBusy(true, '이 화를 다시 수집하는 중…');
+    const harvested = await UrlHarvester.fetchFromUrl(chapter.sourceUrl);
+    const { chapters, chapter: updated } = upsertChapter(state.chapters, harvested, `reload-${Date.now()}`);
+    state.chapters = chapters;
+    rememberEpisodeLinks(harvested, updated);
+    saveRecentChapters(chapters);
+    await persistCatalogItem(updated);
+    await openChapter(updated.id, Math.min(keepPage, harvested.pages.length));
+    toast(`이미지 ${harvested.pages.length}장을 새로 받아왔습니다.`);
   } catch (err) {
     toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
   } finally {
@@ -1609,6 +1646,7 @@ function wireEvents() {
     openModal(el.modalEpisodes);
   });
   el.btnImport.addEventListener('click', () => openModal(el.modalImport));
+  el.btnReload.addEventListener('click', () => reloadCurrentChapter());
   el.btnFiles.addEventListener('click', () => openModal(el.modalFiles));
   el.btnDisplay.addEventListener('click', () => openModal(el.modalDisplay));
   el.btnSettings.addEventListener('click', () => openModal(el.modalSettings));

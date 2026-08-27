@@ -22,6 +22,16 @@ export const STRIP_RATIO = 1.8;
 /** 두 장 펼침을 쓸 최소 가로폭 (8.4인치 기준) */
 export const DOUBLE_MIN_WIDTH = 900;
 
+/**
+ * 주소만 봐도 웹툰인 출처 표식.
+ *
+ * 컷 비율로는 못 가른다 — 뉴토키 실측: 웹툰 한 화를 600x900(3:4) 조각으로
+ * 잘라 서빙해서 h/w 가 1.5, STRIP_RATIO(1.8)에 못 미쳐 페이지 넘김으로 떴다.
+ * 만화 스캔본도 비슷한 비율이라 비율 기준을 낮추면 반대로 오판한다.
+ * 출처 주소의 /webtoon/ 같은 표식이 비율보다 먼저다.
+ */
+export const WEBTOON_URL_HINT = /\/webtoon|webtoons\.com|\/manhwa/i;
+
 /** 이미지 실측 비율로 펼침 컷인지 판단한다 */
 export function isSpreadRatio(width, height) {
   if (!width || !height) return false;
@@ -32,12 +42,15 @@ export function isSpreadRatio(width, height) {
  * 실제로 쓸 모드를 정한다.
  *
  * mode 가 'auto' 가 아니면 사용자 선택을 그대로 따른다.
- * auto 면 측정된 이미지 비율을 먼저 본다 — 세로로 길면 웹툰이므로 연속 스크롤.
+ * auto 면 출처 주소를 먼저 본다 — /webtoon/ 이면 컷 비율과 무관하게 웹툰이다.
+ * 다음으로 측정된 이미지 비율 — 세로로 길면 웹툰이므로 연속 스크롤.
  * 비율 정보가 없으면 화면 크기로 정한다. 8.4인치에서 두 장 펼침은
  * 가로로 충분히 넓을 때만 읽을 만하다.
  */
-export function resolveMode({ mode, ratios = [], viewportWidth, viewportHeight }) {
+export function resolveMode({ mode, ratios = [], viewportWidth, viewportHeight, sourceUrl }) {
   if (mode && mode !== 'auto') return mode;
+
+  if (sourceUrl && WEBTOON_URL_HINT.test(sourceUrl)) return 'strip';
 
   if (ratios.length > 0) {
     const tall = ratios.filter((r) => r.w > 0 && r.h / r.w >= STRIP_RATIO).length;

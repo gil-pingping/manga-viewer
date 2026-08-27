@@ -74,6 +74,8 @@ export class ReaderEngine {
 
     this.releaseImageCache();
     this.measuredRatios = [];
+    this.__lastRenderMode = null; // 새 화는 저장된 페이지로 앵커한다 (스크롤 보존 아님)
+    this.container?.style.removeProperty('--strip-cut-ratio'); // 화마다 컷 크기가 다르다
     this.resetZoom();
     this.render();
     this.probeLeadingImages();
@@ -100,6 +102,8 @@ export class ReaderEngine {
       ratios: this.measuredRatios,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
+      // 출처 주소의 /webtoon/ 표식 — 3:4 조각 웹툰(뉴토키)은 비율로 못 가른다
+      sourceUrl: this.episode?.sourceUrl || this.episode?.targetUrl || null,
     });
   }
 
@@ -139,15 +143,28 @@ export class ReaderEngine {
     img.draggable = false;
 
     img.addEventListener('load', () => {
+      img.__retries = 0;
       img.classList.remove('is-loading');
       img.classList.remove('is-error');
-      img.closest('.manga-page-wrapper, .manga-strip-page')?.classList.remove('load-failed');
+      const holder = img.closest('.manga-page-wrapper, .manga-strip-page');
+      holder?.classList.remove('load-failed');
+      holder?.classList.add('is-loaded'); // 자리 예약(min-height) 해제
       // 브라우저는 이미 바이트를 읽었다. URL 매핑만 즉시 놓아 원본 Blob을 붙들지 않는다.
       this.releaseOwnedUrl(img);
       this.recordRatio(index, img.naturalWidth, img.naturalHeight);
     });
 
     img.addEventListener('error', () => {
+      // 일시적 네트워크 오류가 종종 있다 — 실패 표시 전에 캐시를 우회해 두 번 더 받아본다
+      const retries = img.__retries || 0;
+      if (retries < 2) {
+        img.__retries = retries + 1;
+        setTimeout(() => {
+          if (this.imageCache.get(page.url) !== img) return; // 그 사이 화가 바뀌었으면 포기
+          this.loadImageElement(img, page, index, { reload: true });
+        }, 700 * (retries + 1));
+        return;
+      }
       this.markImageFailed(img);
     });
 
@@ -214,6 +231,22 @@ export class ReaderEngine {
     const page = this.pages[index];
     if (!page || !w || !h) return;
 
+    // 웹툰 컷은 크기가 균일하다 — 첫 실측 비율을 미로드 자리 예약에 적용하면
+    // 로드 때 높이 차이가 거의 없어 스크롤이 출렁이지 않는다.
+    if (this.container && !this.container.style.getPropertyValue('--strip-cut-ratio')) {
+      this.container.style.setProperty('--strip-cut-ratio', `${w} / ${h}`);
+      // 자리 예약 높이가 방금 확정됐다 — 렌더 때 잡아둔 컷으로 다시 앵커한다
+      if (this.__stripAnchorIndex != null && this.getEffectiveMode() === 'strip') {
+        this.scrollStripToIndex(this.__stripAnchorIndex);
+        this.__stripAnchorIndex = null;
+      }
+    }
+
+    // 비율 추가가 auto 판정을 실제로 바꿀 때만 다시 그린다.
+    // 예전엔 auto 모드에서 이미지가 로드될 때마다 전체 재렌더를 돌려서
+    // 연속 스크롤이 읽는 중에 계속 튀었다 (재렌더가 스크롤 위치를 앵커로 되돌린다).
+    const modeBefore = this.getEffectiveMode();
+
     if (this.measuredRatios.length < 12) this.measuredRatios.push({ w, h });
 
     if (page.__measured) return;
@@ -223,9 +256,9 @@ export class ReaderEngine {
     const isSpread = isSpreadRatio(w, h);
     page.isSpread = isSpread;
 
-    // 화면에 걸린 페이지의 펼침 여부가 바뀌었거나 auto 모드 판정이 흔들리면 다시 그린다
-    const affectsLayout = isSpread !== wasSpread || this.mode === 'auto';
-    if (affectsLayout && this.isNearVisible(index)) this.render();
+    const modeChanged = this.getEffectiveMode() !== modeBefore;
+    const spreadChanged = isSpread !== wasSpread && this.isNearVisible(index);
+    if (modeChanged || spreadChanged) this.render();
   }
 
   isNearVisible(index) {
@@ -330,8 +363,8 @@ export class ReaderEngine {
 
     if (this.getEffectiveMode() === 'strip') {
       this.currentIndex = target;
-      const wrapper = this.container.querySelector(`[data-index="${target}"]`);
-      if (wrapper) wrapper.scrollIntoView({ block: 'start', behavior: 'auto' });
+      this.__stripAnchorIndex = null; // 사용자가 직접 이동했다 — 늦은 재앵커로 되돌리지 않는다
+      this.scrollStripToIndex(target);
       this.emitPageChange();
       return;
     }
@@ -361,9 +394,14 @@ export class ReaderEngine {
     if (!this.container || !this.pages.length) return;
 
     const mode = this.getEffectiveMode();
+    // 이미 연속 스크롤을 읽는 중에 다시 그리면(리사이즈 등) 위치를 지켜야 한다.
+    // 매번 앵커로 점프하면 읽던 자리를 잃는다.
+    const keepScroll = mode === 'strip' && this.__lastRenderMode === 'strip';
+    this.__lastRenderMode = mode;
+
     this.container.className = `manga-viewport mode-${mode} dir-${this.direction.toLowerCase()}`;
 
-    if (mode === 'strip') this.renderStrip();
+    if (mode === 'strip') this.renderStrip({ keepScroll });
     else this.renderPaged(mode);
 
     this.preloadSurrounding();
@@ -410,7 +448,8 @@ export class ReaderEngine {
   }
 
   /** 연속 스크롤: 전부 배치하고 브라우저의 lazy 로딩에 맡긴다 */
-  renderStrip() {
+  renderStrip({ keepScroll = false } = {}) {
+    const savedScrollTop = keepScroll ? this.container.scrollTop : null;
     const frag = document.createDocumentFragment();
 
     this.pages.forEach((page, index) => {
@@ -421,6 +460,8 @@ export class ReaderEngine {
       const img = this.getImageElement(index, { defer: index >= 3 && !!this.stripLoadObserver });
       if (!img) return;
       img.loading = index < 3 ? 'eager' : 'lazy';
+      // 캐시에서 이미 로드된 컷은 자리 예약(min-height)을 바로 푼다
+      if (img.complete && img.naturalWidth > 0) wrapper.classList.add('is-loaded');
 
       const retry = document.createElement('button');
       retry.className = 'page-retry';
@@ -438,8 +479,21 @@ export class ReaderEngine {
     this.container.replaceChildren(frag);
     this.observeStripPages();
 
-    const target = this.container.querySelector(`[data-index="${this.currentIndex}"]`);
-    if (target) target.scrollIntoView({ block: 'start', behavior: 'auto' });
+    if (savedScrollTop !== null) {
+      // 읽던 위치 유지 (리사이즈·비율 측정으로 인한 재렌더)
+      this.container.scrollTo({ top: savedScrollTop, behavior: 'instant' });
+      return;
+    }
+    // 자리 예약 높이가 아직 추정치다 — 첫 실측 비율이 잡히면 recordRatio 가
+    // 이 인덱스로 다시 앵커한다 (안 그러면 위쪽이 자라며 읽던 페이지가 밀린다)
+    this.__stripAnchorIndex = this.currentIndex;
+    this.scrollStripToIndex(this.currentIndex);
+  }
+
+  /** 연속 스크롤에서 특정 컷의 머리로 즉시 이동 (CSS smooth 를 타지 않는다) */
+  scrollStripToIndex(index) {
+    const target = this.container.querySelector(`[data-index="${index}"]`);
+    if (target) target.scrollIntoView({ block: 'start', behavior: 'instant' });
   }
 
   /**
@@ -521,6 +575,7 @@ export class ReaderEngine {
             const img = this.getImageElement(index);
             if (img && !entry.target.contains(img)) {
               entry.target.prepend(img);
+              if (img.complete && img.naturalWidth > 0) entry.target.classList.add('is-loaded');
             }
             entry.target.classList.remove('is-virtualized');
           } else {

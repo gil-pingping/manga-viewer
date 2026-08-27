@@ -47,6 +47,40 @@ check('세로로 긴 이미지가 많으면 strip (웹툰)', () => {
   );
 });
 
+check('출처가 /webtoon/ 이면 컷 비율과 무관하게 strip (뉴토키 실측)', () => {
+  // 뉴토키는 웹툰을 600x900(3:4) 조각으로 서빙한다 — 비율로는 만화책처럼 보인다
+  const ratios = Array.from({ length: 6 }, () => ({ w: 600, h: 900 }));
+  assert.equal(
+    resolveMode({
+      mode: 'auto',
+      ratios,
+      viewportWidth: 1280,
+      viewportHeight: 800,
+      sourceUrl: 'https://newtoki1.org/webtoon/2058/81008',
+    }),
+    'strip'
+  );
+  // 사용자가 직접 고른 모드는 힌트보다 우선한다
+  assert.equal(
+    resolveMode({ mode: 'single', sourceUrl: 'https://ex.test/webtoon/1/2', viewportWidth: 800, viewportHeight: 1280 }),
+    'single'
+  );
+});
+
+check('웹툰 표식 없는 주소는 힌트가 발동하지 않는다', () => {
+  const ratios = Array.from({ length: 6 }, () => ({ w: 1000, h: 1414 }));
+  assert.notEqual(
+    resolveMode({
+      mode: 'auto',
+      ratios,
+      viewportWidth: 1280,
+      viewportHeight: 800,
+      sourceUrl: 'https://manatoki.net/comic/12345',
+    }),
+    'strip'
+  );
+});
+
 check('만화책 비율이면 strip 이 아니다', () => {
   const ratios = Array.from({ length: 6 }, () => ({ w: 1000, h: 1414 })); // h/w = 1.41
   assert.notEqual(

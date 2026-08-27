@@ -179,6 +179,15 @@ button {
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
+  /* 로드 전 자리 예약 — 위쪽 컷이 늦게 로드되며 읽던 위치가 밀리는 것을 막는다.
+     첫 컷 실측 비율(--strip-cut-ratio)이 잡히면 그 높이로 정확히 예약된다. */
+  min-height: 45vh;
+  aspect-ratio: var(--strip-cut-ratio, auto);
+}
+
+.manga-strip-page.is-loaded {
+  min-height: 0;
+  aspect-ratio: auto;
 }
 
 .manga-strip-page.is-virtualized {
