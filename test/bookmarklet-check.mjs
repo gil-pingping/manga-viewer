@@ -78,6 +78,25 @@ check('번들러가 함수 이름을 바꿔도 주입 이름은 고정된다', (
   assert.equal(new Function(source)(), 7);
 });
 
+check('직렬화된 본문 안의 리네임된 호출부도 고정 이름으로 되돌린다 (v1.4.2 실사고)', () => {
+  // rollup 이 동명 충돌로 keepDominantDirectory 를 `$1` 로 리네임하면
+  // selectContentImages 본문의 호출부도 리네임된다. 주입 스코프에는 고정
+  // 이름만 있으므로 그대로 실으면 기기에서 ReferenceError 로 수집이 전멸한다.
+  const keepDominantDirectory$1 = function (x) {
+    return x * 2;
+  };
+  void keepDominantDirectory$1;
+  const caller = function selectContentImages$1(x) {
+    return keepDominantDirectory$1(x);
+  };
+  const source = `${serializeBundledFunctions([
+    ['keepDominantDirectory', keepDominantDirectory$1],
+    ['selectContentImages', caller],
+  ])}\nreturn selectContentImages(21);`;
+  assert.ok(!/\$\d/.test(source), '직렬화 결과에 리네임 참조가 남아 있다');
+  assert.equal(new Function(source)(), 42);
+});
+
 check('상수도 값으로 실렸다', () => {
   const consts = bundledConstants();
   for (const name of [

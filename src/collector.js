@@ -38,10 +38,25 @@ const BUNDLED = [
   ['findSeriesListUrl', dom.findSeriesListUrl],
 ];
 
-/** 번들러가 함수 이름을 바꿔도 페이지에서 쓸 이름은 고정한다. */
+/**
+ * 번들러가 함수 이름을 바꿔도 페이지에서 쓸 이름은 고정한다.
+ *
+ * 여기에 함정이 하나 더 있다: 다른 모듈에 동명 함수가 있으면 rollup 이
+ * 이쪽 심볼을 `이름$1` 로 리네임하고, 그러면 **직렬화된 함수 본문 안의
+ * 호출부도** `이름$1(...)` 이 된다. 주입 스코프에는 고정 이름만 있으므로
+ * 기기에서 ReferenceError 로 수집이 전멸한다 (v1.4.2 실사고:
+ * series.js 의 private keepDominantDirectory 와 충돌).
+ * 그래서 직렬화할 때 리네임된 참조를 고정 이름으로 되돌린다.
+ */
 function serializeBundledFunctions(entries = BUNDLED) {
+  const restoreRenames = (src) =>
+    entries.reduce(
+      (out, [fixed]) => out.replace(new RegExp(`\\b${fixed}\\$\\d+\\b`, 'g'), fixed),
+      src
+    );
+
   return entries
-    .map(([name, fn]) => `var ${name} = (${fn.toString().replace(/^export\s+/, '')});`)
+    .map(([name, fn]) => `var ${name} = (${restoreRenames(fn.toString().replace(/^export\s+/, ''))});`)
     .join('\n');
 }
 

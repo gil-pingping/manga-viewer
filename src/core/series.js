@@ -94,7 +94,13 @@ function linkDirectory(href) {
  * 최다 디렉터리만 남긴다. 목록 페이지에는 다른 작품 추천 링크가 섞여 있고
  * 그것들도 "12화" 같은 텍스트를 달고 있다.
  */
-function keepDominantDirectory(entries) {
+/**
+ * 이름 주의: imageRules.js 의 keepDominantDirectory 와 같은 이름을 쓰면 안 된다.
+ * 같은 청크로 번들되면 한쪽이 "이름 뒤에 $1" 로 리네임되는데, 문자열화되어
+ * 북마클릿·WebView 에 실리는 수집 함수 본문이 그 리네임된 이름을 부르면
+ * 주입 스코프에 없어 ReferenceError 가 난다 (v1.4.2 실사고 — 기기 수집 전멸).
+ */
+function keepDominantEpisodeDir(entries) {
   const counts = new Map();
   for (const entry of entries) {
     if (!entry.dir) continue;
@@ -149,7 +155,7 @@ export function selectEpisodeLinks(links) {
     });
   }
 
-  const sameSeries = keepDominantDirectory(candidates);
+  const sameSeries = keepDominantEpisodeDir(candidates);
 
   /**
    * 한 회차가 두 주소(재업 등)로 걸려도 한 줄만 남긴다.
