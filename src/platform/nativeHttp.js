@@ -5,6 +5,7 @@ import {
   imageRequestHeaders,
   pageRequestHeaders,
 } from '../shared/proxyRules.js';
+import { OTA_ORIGIN } from '../core/otaManifest.js';
 import {
   ANILIFE_API_ORIGIN,
   ANILIFE_ORIGIN,
@@ -129,6 +130,22 @@ export async function readRangedNativeBytes(request, { url, headers, range = '',
   return { status: range ? 206 : 200, data: joined.buffer };
 }
 
+/**
+ * 통신사 차단 우회용 Worker 중계 토큰.
+ *
+ * 왜 필요한가: 일부 회선이 만화 사이트·CDN 의 TLS 를 SNI 필터로 리셋한다
+ * (실측: 같은 주소가 낮엔 되고 밤엔 TLS 단계에서 끊겼다). 기기 직접 연결이
+ * 죽으면 해외 egress 인 Worker 를 중계로 쓴다 — 그 인증 토큰이다.
+ * 설정 화면에서 한 번 넣으면 저장된다. 없으면 폴백 없이 원래 실패를 보고한다.
+ */
+export function proxyAuthToken() {
+  try {
+    return localStorage.getItem('mv:proxyToken') || '';
+  } catch {
+    return '';
+  }
+}
+
 /** 웹은 기존 Worker, APK는 태블릿 네트워크로 대상 HTML을 직접 받는다. */
 export async function fetchPageDocument(targetUrl) {
   if (!isNativeApp()) {
@@ -136,16 +153,41 @@ export async function fetchPageDocument(targetUrl) {
   }
 
   const target = assertFetchableUrl(targetUrl, false);
-  const response = await nativeGet({
-    url: target.href,
-    headers: { ...pageRequestHeaders(target.origin + '/'), 'User-Agent': navigator.userAgent },
-    responseType: 'text',
-  });
-  const status = response.status >= 200 && response.status <= 599 ? response.status : 502;
-  const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+  let direct = null;
+  let directError = null;
+  try {
+    direct = await nativeGet({
+      url: target.href,
+      headers: { ...pageRequestHeaders(target.origin + '/'), 'User-Agent': navigator.userAgent },
+      responseType: 'text',
+    });
+  } catch (err) {
+    directError = err;
+  }
+
+  // 직접 연결이 끊기거나 차단 응답이면 Worker 중계로 한 번 더 받아본다
+  if (!direct || direct.status >= 400) {
+    const token = proxyAuthToken();
+    if (token) {
+      try {
+        const viaWorker = await nativeGet({
+          url: `${OTA_ORIGIN}/api/fetch-page?url=${encodeURIComponent(target.href)}`,
+          headers: { 'X-MV-Token': token },
+          responseType: 'text',
+        });
+        if (viaWorker.status < 400) direct = viaWorker;
+      } catch {
+        /* 중계도 실패면 원래 결과를 보고한다 */
+      }
+    }
+  }
+
+  if (!direct) throw directError || new Error('페이지를 가져오지 못했습니다.');
+  const status = direct.status >= 200 && direct.status <= 599 ? direct.status : 502;
+  const body = typeof direct.data === 'string' ? direct.data : JSON.stringify(direct.data);
   return new Response(body, {
     status,
-    headers: { 'Content-Type': header(response.headers, 'content-type') || 'text/html' },
+    headers: { 'Content-Type': header(direct.headers, 'content-type') || 'text/html' },
   });
 }
 
@@ -238,24 +280,55 @@ export async function fetchPageImage(page, { signal } = {}) {
 
   const target = assertFetchableUrl(rawUrl, false);
   const referer = page?.refererUrl || 'https://newtoki1.org/';
-  const response = await nativeGet({
-    url: target.href,
-    headers: {
-      ...imageRequestHeaders(referer, 'https://newtoki1.org/'),
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    },
-    responseType: 'blob',
-  });
-  throwIfAborted(signal);
 
-  const contentType = header(response.headers, 'content-type') || 'application/octet-stream';
-  const gotHtml = contentType.includes('text/html');
-  const ok = response.status >= 200 && response.status < 300 && !gotHtml;
-  return {
-    ok,
-    status: gotHtml ? 502 : response.status || 502,
-    blob: ok ? base64ToBlob(response.data, contentType) : null,
-  };
+  let direct = null;
+  let directError = null;
+  try {
+    const response = await nativeGet({
+      url: target.href,
+      headers: {
+        ...imageRequestHeaders(referer, 'https://newtoki1.org/'),
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      },
+      responseType: 'blob',
+    });
+    const contentType = header(response.headers, 'content-type') || 'application/octet-stream';
+    const gotHtml = contentType.includes('text/html');
+    const ok = response.status >= 200 && response.status < 300 && !gotHtml;
+    direct = {
+      ok,
+      status: gotHtml ? 502 : response.status || 502,
+      blob: ok ? base64ToBlob(response.data, contentType) : null,
+    };
+  } catch (err) {
+    directError = err;
+  }
+  throwIfAborted(signal);
+  if (direct?.ok) return direct;
+
+  // 직접 연결이 죽는 회선(SNI 필터 실측)에서는 Worker 중계로 한 번 더 받아본다
+  const token = proxyAuthToken();
+  if (token) {
+    try {
+      let proxied = `${OTA_ORIGIN}/api/proxy-image?url=${encodeURIComponent(target.href)}`;
+      if (referer) proxied += `&ref=${encodeURIComponent(referer)}`;
+      const response = await nativeGet({
+        url: proxied,
+        headers: { 'X-MV-Token': token },
+        responseType: 'blob',
+      });
+      throwIfAborted(signal);
+      const contentType = header(response.headers, 'content-type') || 'image/jpeg';
+      if (response.status >= 200 && response.status < 300) {
+        return { ok: true, status: response.status, blob: base64ToBlob(response.data, contentType) };
+      }
+    } catch {
+      /* 중계도 실패면 원래 실패를 보고한다 */
+    }
+  }
+
+  if (direct) return direct;
+  throw directError || new Error('이미지를 가져오지 못했습니다.');
 }
 
 /** ReaderEngine이 만든 URL만 ReaderEngine이 revoke한다. */

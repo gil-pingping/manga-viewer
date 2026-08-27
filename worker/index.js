@@ -93,6 +93,16 @@ async function authorize(request, env) {
   const expected = await sha256Hex(env.MV_TOKEN);
   if (constantTimeEqual(readCookie(request, COOKIE_NAME), expected)) return null; // 통과
 
+  /**
+   * 네이티브 앱(APK)은 쿠키 세션이 없다 — 토큰을 요청에 직접 실어 보낸다.
+   * 왜 필요한가: 통신사에 따라 만화 사이트·CDN 의 TLS 를 리셋하는 회선이
+   * 있어(실측: SNI 필터) 기기 직접 연결이 통째로 죽는다. 그때 Worker 를
+   * 중계로 쓰는 폴백이 이 경로다. 비교는 쿠키와 같은 상수시간 비교.
+   */
+  const url = new URL(request.url);
+  const direct = request.headers.get('x-mv-token') || url.searchParams.get('t') || '';
+  if (direct && constantTimeEqual(String(direct), env.MV_TOKEN)) return null;
+
   return json(401, {
     ok: false,
     error: '인증이 필요합니다. 토큰이 붙은 주소로 한 번 열어주세요 (?t=...).',

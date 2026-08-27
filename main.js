@@ -187,6 +187,7 @@ const el = {
   brightnessOut: $('brightness-out'),
   transition: $('setting-transition'),
   speed: $('setting-speed'),
+  proxyToken: $('setting-proxy-token'),
 };
 
 /* ==================================================================== */
@@ -1773,6 +1774,18 @@ function wireEvents() {
     engine.setTransitionType(e.target.value);
   });
 
+  // 통신사 차단 회선에서 Worker 중계로 받아올 때 쓰는 토큰. 값은 기기에만 남는다.
+  el.proxyToken.addEventListener('change', (e) => {
+    const token = e.target.value.trim();
+    try {
+      if (token) localStorage.setItem('mv:proxyToken', token);
+      else localStorage.removeItem('mv:proxyToken');
+      toast(token ? '중계 서버 토큰을 저장했습니다.' : '중계 서버 토큰을 지웠습니다.');
+    } catch {
+      toast('토큰을 저장하지 못했습니다.', { error: true });
+    }
+  });
+
   el.speed.addEventListener('change', (e) => {
     const seconds = Math.min(60, Math.max(1, parseInt(e.target.value, 10) || 5));
     e.target.value = String(seconds);
@@ -1849,6 +1862,11 @@ function applySettingsToUI() {
   el.transition.value = state.settings.transition;
   el.speed.value = String(state.settings.speed);
   el.brightness.value = String(state.settings.brightness);
+  try {
+    el.proxyToken.value = localStorage.getItem('mv:proxyToken') || '';
+  } catch {
+    /* 저장소가 막힌 환경이면 빈 칸으로 둔다 */
+  }
 
   applyPaper(state.settings.paper);
   applyBrightness(state.settings.brightness);

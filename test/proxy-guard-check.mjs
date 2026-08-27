@@ -114,4 +114,49 @@ check('올바른 원본 페이지 힌트를 우선한다', () => {
   assert.equal(imageRequestHeaders(page, 'https://cdn.example.test/').Referer, page);
 });
 
+/* -------------------------------------------------------------------- */
+/* Worker 인증 — 쿠키 없는 네이티브 앱의 토큰 직접 전달                   */
+/* -------------------------------------------------------------------- */
+
+async function checkAsync(name, fn) {
+  await fn();
+  passed++;
+  console.log(`  ok  ${name}`);
+}
+
+const { default: worker } = await import('../worker/index.js');
+const env = { MV_TOKEN: 'test-token-123', ASSETS: { fetch: () => new Response('asset') } };
+// 타깃을 사설망 주소로 줘서 인증만 통과하면 400(사설망 차단)이 나오게 한다 —
+// 실제 외부 fetch 없이 "401이 아니게 됐는가"만 본다.
+const guarded =
+  'https://x.example/api/proxy-image?url=' + encodeURIComponent('http://192.168.0.1/a.jpg');
+
+console.log('\nWorker 인증 (토큰 직접 전달)');
+
+await checkAsync('토큰 없으면 401', async () => {
+  const res = await worker.fetch(new Request(guarded), env);
+  assert.equal(res.status, 401);
+});
+
+await checkAsync('X-MV-Token 헤더가 맞으면 인증 통과 (사설망 차단 400 도달)', async () => {
+  const res = await worker.fetch(
+    new Request(guarded, { headers: { 'X-MV-Token': 'test-token-123' } }),
+    env
+  );
+  assert.equal(res.status, 400);
+});
+
+await checkAsync('?t= 쿼리로도 인증된다', async () => {
+  const res = await worker.fetch(new Request(guarded + '&t=test-token-123'), env);
+  assert.equal(res.status, 400);
+});
+
+await checkAsync('틀린 토큰은 여전히 401', async () => {
+  const res = await worker.fetch(
+    new Request(guarded, { headers: { 'X-MV-Token': 'wrong' } }),
+    env
+  );
+  assert.equal(res.status, 401);
+});
+
 console.log(`\n${passed}개 통과`);
