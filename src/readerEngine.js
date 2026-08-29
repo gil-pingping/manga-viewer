@@ -25,21 +25,19 @@ const PRELOAD_AHEAD = 8;
 const PRELOAD_BEHIND = 3;
 const MAX_ZOOM = 4;
 const SWIPE_THRESHOLD_PX = 55;
+const STRIP_END_WHEEL_COOLDOWN_MS = 600;
 
 export class ReaderEngine {
   constructor(options = {}) {
     this.container = options.container;
     this.pages = [];
+    this.segments = [];
     this.currentIndex = 0;
     this.episode = null;
 
     this.mode = options.mode || 'auto';
     this.direction = options.direction || 'RTL';
     this.transitionType = options.transitionType || 'slide';
-    this.autoPlaySpeed = options.autoPlaySpeed || 5;
-    this.isAutoPlaying = false;
-    this.autoPlayTimer = null;
-
     this.zoomScale = 1;
     this.panX = 0;
     this.panY = 0;
@@ -69,7 +67,9 @@ export class ReaderEngine {
 
   loadChapter(episodeData, initialPageNum = 1) {
     this.episode = episodeData;
-    this.pages = episodeData.pages || [];
+    const segment = this.createSegment(episodeData, 0);
+    this.segments = [segment];
+    this.pages = this.cloneChapterPages(episodeData, segment);
     this.currentIndex = clamp(initialPageNum - 1, 0, Math.max(0, this.pages.length - 1));
 
     this.releaseImageCache();
@@ -79,6 +79,61 @@ export class ReaderEngine {
     this.resetZoom();
     this.render();
     this.probeLeadingImages();
+  }
+
+  createSegment(episodeData, startIndex) {
+    const pageCount = Array.isArray(episodeData?.pages) ? episodeData.pages.length : 0;
+    return {
+      chapterId: episodeData?.id ?? null,
+      sourceUrl: episodeData?.sourceUrl || episodeData?.targetUrl || null,
+      title: episodeData?.title || '',
+      label: episodeData?.label || '',
+      startIndex,
+      pageCount,
+    };
+  }
+
+  cloneChapterPages(episodeData, segment) {
+    return (Array.isArray(episodeData?.pages) ? episodeData.pages : []).map((page, index) => ({
+      ...page,
+      chapterId: segment.chapterId,
+      chapterSourceUrl: segment.sourceUrl,
+      chapterTitle: segment.title,
+      chapterLabel: segment.label,
+      chapterPageNumber: index + 1,
+    }));
+  }
+
+  /** strip 정주행: 현재 DOM을 갈아엎지 않고 다음 화를 아래에 붙인다. */
+  appendChapter(episodeData) {
+    if (this.getEffectiveMode() !== 'strip') return false;
+
+    const segment = this.createSegment(episodeData, this.pages.length);
+    if (!segment.pageCount) return false;
+    if (
+      this.segments.some(
+        (existing) =>
+          (segment.chapterId != null && existing.chapterId === segment.chapterId) ||
+          (segment.sourceUrl && existing.sourceUrl === segment.sourceUrl)
+      )
+    ) {
+      return false;
+    }
+
+    const pages = this.cloneChapterPages(episodeData, segment);
+    const savedScrollTop = this.container.scrollTop;
+    this.segments.push(segment);
+    this.pages.push(...pages);
+    const frag = document.createDocumentFragment();
+    pages.forEach((page, offset) => {
+      const wrapper = this.createStripPage(page, segment.startIndex + offset);
+      if (wrapper) frag.appendChild(wrapper);
+    });
+
+    this.container.appendChild(frag);
+    this.observeStripPages();
+    this.container.scrollTop = savedScrollTop;
+    return true;
   }
 
   /**
@@ -318,7 +373,6 @@ export class ReaderEngine {
     });
 
     if (target === null) {
-      this.stopAutoPlay();
       this.onEpisodeEnd();
       return;
     }
@@ -359,7 +413,9 @@ export class ReaderEngine {
   }
 
   goToPage(pageNumber) {
-    const target = clamp(pageNumber - 1, 0, Math.max(0, this.pages.length - 1));
+    const page = this.getPageForCurrentChapter(pageNumber);
+    if (!page) return;
+    const target = this.pages.indexOf(page);
 
     if (this.getEffectiveMode() === 'strip') {
       this.currentIndex = target;
@@ -381,7 +437,6 @@ export class ReaderEngine {
     const atBottom =
       this.container.scrollTop + this.container.clientHeight >= this.container.scrollHeight - 8;
     if (dir > 0 && atBottom) {
-      this.stopAutoPlay();
       this.onEpisodeEnd();
     }
   }
@@ -453,27 +508,8 @@ export class ReaderEngine {
     const frag = document.createDocumentFragment();
 
     this.pages.forEach((page, index) => {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'manga-strip-page';
-      wrapper.dataset.index = String(index);
-
-      const img = this.getImageElement(index, { defer: index >= 3 && !!this.stripLoadObserver });
-      if (!img) return;
-      img.loading = index < 3 ? 'eager' : 'lazy';
-      // 캐시에서 이미 로드된 컷은 자리 예약(min-height)을 바로 푼다
-      if (img.complete && img.naturalWidth > 0) wrapper.classList.add('is-loaded');
-
-      const retry = document.createElement('button');
-      retry.className = 'page-retry';
-      retry.type = 'button';
-      retry.textContent = '이미지 실패 · 다시 시도';
-      retry.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.retryPage(index);
-      });
-
-      wrapper.append(img, retry);
-      frag.appendChild(wrapper);
+      const wrapper = this.createStripPage(page, index);
+      if (wrapper) frag.appendChild(wrapper);
     });
 
     this.container.replaceChildren(frag);
@@ -488,6 +524,29 @@ export class ReaderEngine {
     // 이 인덱스로 다시 앵커한다 (안 그러면 위쪽이 자라며 읽던 페이지가 밀린다)
     this.__stripAnchorIndex = this.currentIndex;
     this.scrollStripToIndex(this.currentIndex);
+  }
+
+  createStripPage(page, index) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'manga-strip-page';
+    wrapper.dataset.index = String(index);
+
+    const img = this.getImageElement(index, { defer: index >= 3 && !!this.stripLoadObserver });
+    if (!img) return null;
+    img.loading = index < 3 ? 'eager' : 'lazy';
+    if (img.complete && img.naturalWidth > 0) wrapper.classList.add('is-loaded');
+
+    const retry = document.createElement('button');
+    retry.className = 'page-retry';
+    retry.type = 'button';
+    retry.textContent = '이미지 실패 · 다시 시도';
+    retry.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.retryPage(index);
+    });
+
+    wrapper.append(img, retry);
+    return wrapper;
   }
 
   /** 연속 스크롤에서 특정 컷의 머리로 즉시 이동 (CSS smooth 를 타지 않는다) */
@@ -534,14 +593,39 @@ export class ReaderEngine {
     }
   }
 
-  emitPageChange() {
-    this.onPageChange({
+  getPageInfo() {
+    const segment = this.getCurrentSegment();
+    const currentPageNum = segment ? this.currentIndex - segment.startIndex + 1 : 0;
+    return {
       currentIndex: this.currentIndex,
-      currentPageNum: this.currentIndex + 1,
-      totalPages: this.pages.length,
+      currentPageNum,
+      totalPages: segment?.pageCount || 0,
       effectiveMode: this.getEffectiveMode(),
-      isAutoPlaying: this.isAutoPlaying,
-    });
+      chapterId: segment?.chapterId ?? null,
+      title: segment?.title || '',
+      label: segment?.label || '',
+    };
+  }
+
+  getCurrentSegment() {
+    return (
+      this.segments.find(
+        (segment) =>
+          this.currentIndex >= segment.startIndex &&
+          this.currentIndex < segment.startIndex + segment.pageCount
+      ) || null
+    );
+  }
+
+  getPageForCurrentChapter(pageNumber) {
+    const segment = this.getCurrentSegment();
+    if (!segment) return null;
+    const localIndex = clamp(Number(pageNumber) - 1 || 0, 0, segment.pageCount - 1);
+    return this.pages[segment.startIndex + localIndex] || null;
+  }
+
+  emitPageChange() {
+    this.onPageChange(this.getPageInfo());
   }
 
   /* ------------------------------------------------------------------ */
@@ -621,12 +705,15 @@ export class ReaderEngine {
     let dragStartPanX = 0;
     let dragStartPanY = 0;
     let isDragging = false;
+    let stripStartedAtBottom = false;
+    let lastStripWheelAt = -Infinity;
     let lastTapAt = 0;
 
     const touchStart = (e) => {
       if (e.touches.length === 2) {
         isPinching = true;
         isDragging = false;
+        stripStartedAtBottom = false;
         pinchStartDist = touchDistance(e.touches);
         pinchStartScale = this.zoomScale;
         return;
@@ -639,6 +726,9 @@ export class ReaderEngine {
         dragStartPanX = this.panX;
         dragStartPanY = this.panY;
         isDragging = true;
+        stripStartedAtBottom =
+          this.getEffectiveMode() === 'strip' &&
+          this.container.scrollTop + this.container.clientHeight >= this.container.scrollHeight - 8;
       }
     };
 
@@ -682,6 +772,16 @@ export class ReaderEngine {
         const dx = t.clientX - dragStartX;
         const dy = t.clientY - dragStartY;
 
+        if (
+          this.getEffectiveMode() === 'strip' &&
+          stripStartedAtBottom &&
+          -dy >= SWIPE_THRESHOLD_PX &&
+          -dy > Math.abs(dx)
+        ) {
+          stripStartedAtBottom = false;
+          this.onEpisodeEnd();
+        }
+
         const isHorizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
         if (
           isHorizontal &&
@@ -694,6 +794,7 @@ export class ReaderEngine {
         }
       }
       isDragging = false;
+      stripStartedAtBottom = false;
 
       // 더블탭 줌 토글
       if (e.changedTouches.length === 1 && this.getEffectiveMode() !== 'strip') {
@@ -711,9 +812,22 @@ export class ReaderEngine {
       }
     };
 
+    const wheel = (e) => {
+      if (this.getEffectiveMode() !== 'strip' || e.deltaY <= 0) return;
+      const startedAtBottom =
+        this.container.scrollTop + this.container.clientHeight >= this.container.scrollHeight - 8;
+      const now = performance.now();
+      const startsNewGesture = now - lastStripWheelAt >= STRIP_END_WHEEL_COOLDOWN_MS;
+      lastStripWheelAt = now;
+      if (!startedAtBottom || !startsNewGesture) return;
+      this.onEpisodeEnd();
+    };
+
     this.container.addEventListener('touchstart', touchStart, { passive: true });
     this.container.addEventListener('touchmove', touchMove, { passive: true });
     this.container.addEventListener('touchend', touchEnd, { passive: true });
+    this.container.addEventListener('wheel', wheel, { passive: true });
+    this.__stripWheelHandler = wheel;
 
     // 데스크톱 확인용: 더블클릭 줌
     this.container.addEventListener('dblclick', () => {
@@ -760,39 +874,10 @@ export class ReaderEngine {
     this.applyZoomTransform();
   }
 
-  /* ------------------------------------------------------------------ */
-  /* 정주행 자동 넘김                                                    */
-  /* ------------------------------------------------------------------ */
-
-  toggleAutoPlay() {
-    this.isAutoPlaying ? this.stopAutoPlay() : this.startAutoPlay();
-    this.emitPageChange();
-    return this.isAutoPlaying;
-  }
-
-  startAutoPlay() {
-    this.stopAutoPlay();
-    this.isAutoPlaying = true;
-    this.autoPlayTimer = setInterval(() => this.nextPage(), this.autoPlaySpeed * 1000);
-  }
-
-  stopAutoPlay() {
-    this.isAutoPlaying = false;
-    if (this.autoPlayTimer) {
-      clearInterval(this.autoPlayTimer);
-      this.autoPlayTimer = null;
-    }
-  }
-
-  setAutoPlaySpeed(seconds) {
-    this.autoPlaySpeed = clamp(seconds, 1, 60);
-    if (this.isAutoPlaying) this.startAutoPlay();
-  }
-
   destroy() {
-    this.stopAutoPlay();
     window.removeEventListener('resize', this.handleResize);
     window.removeEventListener('orientationchange', this.handleResize);
+    this.container?.removeEventListener('wheel', this.__stripWheelHandler);
     if (this.stripObserver) this.stripObserver.disconnect();
     if (this.stripLoadObserver) this.stripLoadObserver.disconnect();
     this.releaseImageCache();

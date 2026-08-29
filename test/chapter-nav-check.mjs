@@ -107,6 +107,18 @@ check('사이트 주소가 목록 순서를 이긴다', () => {
   });
 });
 
+check('다음 주소와 같은 이미 불러온 화는 fetch 없이 연다', () => {
+  const nextUrl = 'https://x.test/ep/250';
+  const list = [
+    loaded('current', { nextUrl: 'https://x.test/ep/250' }),
+    demo('demo'),
+    loaded('prefetched', { sourceUrl: nextUrl }),
+  ];
+  const r = resolveAdjacent(list, 'current', 1);
+  assert.equal(r.kind, 'open');
+  assert.equal(r.chapter.id, 'prefetched');
+});
+
 check('주소가 없으면 불러둔 이웃을 연다', () => {
   const r = resolveAdjacent([loaded('a'), loaded('b')], 'a', 1);
   assert.equal(r.kind, 'open');

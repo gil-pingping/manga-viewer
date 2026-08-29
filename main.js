@@ -103,6 +103,11 @@ let engine = null;
 let chromeTimer = null;
 let toastTimer = null;
 let nextChapterPrefetch = null;
+let bingeEnabled = false;
+let bingeGeneration = 0;
+let bingeTailId = null;
+let bingePromise = null;
+let chapterNavigationBusy = false;
 let animePlayer = null;
 let animePlaySequence = 0;
 
@@ -186,7 +191,6 @@ const el = {
   brightness: $('filter-brightness'),
   brightnessOut: $('brightness-out'),
   transition: $('setting-transition'),
-  speed: $('setting-speed'),
   proxyToken: $('setting-proxy-token'),
 };
 
@@ -391,9 +395,13 @@ async function openChapter(chapterId, pageNumber) {
   el.btnNextEp.disabled = !hasAdjacent(1);
 
   const startAt = pageNumber ?? readProgress()[chapter.id] ?? 1;
+  bingeGeneration++;
+  bingePromise = null;
+  bingeTailId = chapter.id;
   engine.loadChapter(forEngine, startAt);
   preloadChapterImages(forEngine);
   prefetchNextChapter(chapter);
+  if (bingeEnabled) ensureBingeAhead();
 }
 
 /** 다음 화 HTML/컷 목록만 조용히 미리 수집하여 다음 화 전환 속도를 극대화한다. */
@@ -408,33 +416,9 @@ function prefetchNextChapter(chapter) {
   ) return;
 
   const promise = UrlHarvester.fetchFromUrl(chapter.nextUrl, { silentRenderedFallback: true })
-    .then(async (harvested) => {
-      if (harvested && harvested.pages?.length > 0) {
-        const { chapters, chapter: prefetched } = upsertChapter(
-          state.chapters,
-          harvested,
-          `prefetch-${Date.now()}`
-        );
-        state.chapters = chapters;
-        saveRecentChapters(state.chapters);
-        await persistCatalogItem(prefetched);
-
-        // 2화 연속 사전 수집: 다음 화의 다음 화도 백그라운드로 수집
-        if (harvested.nextUrl) {
-          UrlHarvester.fetchFromUrl(harvested.nextUrl, { silentRenderedFallback: true })
-            .then(async (h2) => {
-              if (h2 && h2.pages?.length > 0) {
-                const res = upsertChapter(state.chapters, h2, `prefetch2-${Date.now()}`);
-                state.chapters = res.chapters;
-                saveRecentChapters(state.chapters);
-                await persistCatalogItem(res.chapter);
-              }
-            })
-            .catch(() => {});
-        }
-      }
-      return harvested;
-    })
+    .then((harvested) => harvested?.pages?.length
+      ? storeHarvestedChapter(harvested, 'prefetch')
+      : null)
     .catch((err) => {
       console.debug('[다음 화 미리 받기] 클릭할 때 다시 시도합니다.', err.message);
       return null;
@@ -493,7 +477,7 @@ async function reloadCurrentChapter() {
     return;
   }
 
-  const keepPage = (engine?.currentIndex ?? 0) + 1;
+  const keepPage = engine?.getPageInfo()?.currentPageNum ?? 1;
   try {
     setBusy(true, '이 화를 다시 수집하는 중…');
     const harvested = await UrlHarvester.fetchFromUrl(chapter.sourceUrl);
@@ -515,7 +499,7 @@ async function reloadCurrentChapter() {
  * 새로 수집한 챕터를 목록 맨 앞에 넣고 바로 연다.
  * 같은 출처를 다시 불러오면 새로 만들지 않고 갱신한다.
  */
-async function addChapter(harvested, idPrefix) {
+async function storeHarvestedChapter(harvested, idPrefix) {
   const { chapters, chapter } = upsertChapter(
     state.chapters,
     harvested,
@@ -525,6 +509,11 @@ async function addChapter(harvested, idPrefix) {
   rememberEpisodeLinks(harvested, chapter);
   saveRecentChapters(chapters);
   await persistCatalogItem(chapter);
+  return chapter;
+}
+
+async function addChapter(harvested, idPrefix) {
+  const chapter = await storeHarvestedChapter(harvested, idPrefix);
 
   // 새로 불러온 콘텐츠는 항상 auto 로 본다. 앞 챕터에서 고른 모드를 물려받으면
   // 웹툰이 페이지 넘김으로 뜨는 식으로 깨진다.
@@ -532,6 +521,165 @@ async function addChapter(harvested, idPrefix) {
 
   await openChapter(chapter.id, 1);
   return chapter;
+}
+
+function updateBingeButton() {
+  el.btnAutoplay.classList.toggle('is-active', bingeEnabled);
+  el.btnAutoplay.setAttribute('aria-pressed', String(bingeEnabled));
+  el.autoplayLabel.textContent = bingeEnabled ? '정주행 끄기' : '정주행';
+  el.btnAutoplay
+    .querySelector('use')
+    .setAttribute('href', bingeEnabled ? '#i-pause' : '#i-play');
+}
+
+async function toggleBingeMode() {
+  if (!bingeEnabled) {
+    if (!el.viewport.classList.contains('mode-strip')) {
+      toast('정주행은 세로 스크롤 웹툰에서만 쓸 수 있습니다.');
+      return;
+    }
+
+    const info = engine?.getPageInfo();
+    if (!info?.chapterId) return;
+
+    bingeEnabled = true;
+    bingeGeneration++;
+    bingePromise = null;
+    bingeTailId = info.chapterId;
+    updateBingeButton();
+    prefetchNextChapter(state.chapters.find((chapter) => chapter.id === info.chapterId));
+    ensureBingeAhead();
+    toast('정주행 시작');
+    return;
+  }
+
+  bingeEnabled = false;
+  bingeGeneration++;
+  bingePromise = null;
+  bingeTailId = null;
+  updateBingeButton();
+  toast('정주행 종료');
+}
+
+async function canLoadFirstPage(chapter) {
+  if (!navigator.onLine || !chapter?.pages?.[0]) return false;
+  const controller = new AbortController();
+  let timer;
+  let resolved = null;
+  const resolving = resolvePageImageUrl(chapter.pages[0]);
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(null);
+    }, 5000);
+  });
+  try {
+    resolved = await Promise.race([resolving, timeout]);
+    if (!resolved) {
+      resolving
+        .then((late) => {
+          if (late?.owned) URL.revokeObjectURL(late.url);
+        })
+        .catch(() => {});
+      return false;
+    }
+    const response = await fetch(resolved.url, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+    return response.ok && !contentType.includes('text/html');
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    if (resolved?.owned) URL.revokeObjectURL(resolved.url);
+  }
+}
+
+function ensureBingeAhead() {
+  if (
+    !bingeEnabled
+    || !bingeTailId
+    || !el.viewport.classList.contains('mode-strip')
+  ) return Promise.resolve(null);
+  if (bingePromise) return bingePromise;
+
+  const generation = bingeGeneration;
+  const tailId = bingeTailId;
+  const task = (async () => {
+    const tail = state.chapters.find((chapter) => chapter.id === tailId);
+    const move = resolveAdjacent(state.chapters, tailId, 1);
+    if (!tail || move.kind === 'none') return null;
+
+    let next = move.kind === 'open' ? move.chapter : null;
+    if (!next) {
+      const prepared = findAdjacentPrefetch(nextChapterPrefetch, tailId, 1, move.url);
+      next = prepared ? await prepared : null;
+      if (!next) {
+        const harvested = await UrlHarvester.fetchFromUrl(move.url, {
+          silentRenderedFallback: true,
+        });
+        if (!harvested?.pages?.length) return null;
+        if (!bingeEnabled || generation !== bingeGeneration || tailId !== bingeTailId) return null;
+        next = await storeHarvestedChapter(harvested, 'binge');
+      }
+    }
+
+    if (!bingeEnabled || generation !== bingeGeneration || tailId !== bingeTailId) return null;
+
+    let offline = null;
+    const proxied = (next.pages || []).some((page) => page.url?.startsWith('/api/'));
+    if (proxied && state.saved.has(next.id) && !(await canLoadFirstPage(next))) {
+      try {
+        offline = await library.resolveOffline(next);
+      } catch (err) {
+        console.warn('[정주행] 저장된 다음 화를 꺼내지 못했습니다', err);
+      }
+    }
+
+    if (!bingeEnabled || generation !== bingeGeneration || tailId !== bingeTailId) {
+      offline?.forEach((url) => URL.revokeObjectURL(url));
+      return null;
+    }
+
+    const forEngine = offline
+      ? { ...next, pages: offline.map((url, i) => ({ ...next.pages[i], url })) }
+      : next;
+    if (!engine.appendChapter(forEngine)) {
+      offline?.forEach((url) => URL.revokeObjectURL(url));
+      return null;
+    }
+
+    if (offline) state.objectUrls.push(...offline);
+    preloadChapterImages(forEngine);
+
+    // Offline Blob URLs retain backing bytes until revoked. Keep one seamless
+    // handoff only; normal next-episode navigation then releases prior URLs.
+    if (offline) {
+      bingeEnabled = false;
+      bingeGeneration++;
+      bingePromise = null;
+      bingeTailId = null;
+      updateBingeButton();
+      toast('오프라인 정주행은 메모리 보호를 위해 다음 1화까지만 이어집니다.');
+      return next;
+    }
+
+    bingeTailId = next.id;
+    prefetchNextChapter(next);
+    return next;
+  })().catch((err) => {
+    console.debug('[정주행] 다음 화는 경계에서 다시 시도합니다.', err.message);
+    return null;
+  });
+
+  bingePromise = task;
+  task.finally(() => {
+    if (bingePromise === task) bingePromise = null;
+  });
+  return task;
 }
 
 function realNeighbor(delta) {
@@ -548,29 +696,42 @@ function hasAdjacent(delta) {
  * 없으면 이미 불러둔 챕터 중에서 찾는다.
  */
 async function goChapter(delta) {
-  const move = resolveAdjacent(state.chapters, state.currentId, delta);
-
-  if (move.kind === 'open') {
-    openChapter(move.chapter.id);
-    return;
-  }
-
-  if (move.kind === 'none') {
-    toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
-    return;
-  }
-
-  // kind === 'fetch' — 사이트가 준 인접 화 주소를 서버가 받아온다
+  if (chapterNavigationBusy) return;
+  chapterNavigationBusy = true;
+  let busy = false;
   try {
+    const move = resolveAdjacent(state.chapters, state.currentId, delta);
+    if (move.kind === 'none') {
+      toast(delta > 0 ? '다음 화가 없습니다.' : '이전 화가 없습니다.');
+      return;
+    }
+
+    if (move.kind === 'open') {
+      resetModeToAuto();
+      await openChapter(move.chapter.id);
+      return;
+    }
+
+    // kind === 'fetch' — 사이트가 준 인접 화 주소를 서버가 받아온다
+    busy = true;
     setBusy(true, delta > 0 ? '다음 화 불러오는 중…' : '이전 화 불러오는 중…');
     const prepared = findAdjacentPrefetch(nextChapterPrefetch, state.currentId, delta, move.url);
-    const harvested = (prepared && await prepared) || await UrlHarvester.fetchFromUrl(move.url);
+    const prefetched = prepared ? await prepared : null;
+    if (prefetched) {
+      resetModeToAuto();
+      await openChapter(prefetched.id, 1);
+      toast(`${prefetched.pages.length}장 불러왔습니다.`);
+      return;
+    }
+
+    const harvested = await UrlHarvester.fetchFromUrl(move.url);
     await addChapter(harvested, 'import');
     toast(`${harvested.pages.length}장 불러왔습니다.`);
   } catch (err) {
     toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
   } finally {
-    setBusy(false);
+    if (busy) setBusy(false);
+    chapterNavigationBusy = false;
   }
 }
 
@@ -669,23 +830,28 @@ function initEngine() {
     mode: state.settings.mode,
     direction: state.settings.direction,
     transitionType: state.settings.transition,
-    autoPlaySpeed: state.settings.speed,
     resolvePageUrl: resolvePageImageUrl,
 
     onPageChange: (info) => {
+      const ownerId = info.chapterId || state.currentId;
+      if (ownerId && ownerId !== state.currentId) {
+        const chapter = state.chapters.find((item) => item.id === ownerId);
+        state.currentId = ownerId;
+        el.title.textContent = info.title || chapter?.title || '만화 뷰어';
+        el.chapter.textContent = info.label || chapter?.label || '';
+        el.btnPrevEp.disabled = !hasAdjacent(-1);
+        el.btnNextEp.disabled = !hasAdjacent(1);
+      }
+
       el.slider.max = String(Math.max(1, info.totalPages));
       el.slider.value = String(info.currentPageNum);
       el.indicator.textContent = `${info.currentPageNum} / ${info.totalPages}`;
-      if (state.currentId) {
-        saveProgress(state.currentId, info.currentPageNum);
-        saveLastChapterId(state.currentId);
+      if (ownerId) {
+        saveProgress(ownerId, info.currentPageNum);
+        saveLastChapterId(ownerId);
       }
 
-      el.btnAutoplay.classList.toggle('is-active', info.isAutoPlaying);
-      el.autoplayLabel.textContent = info.isAutoPlaying ? '멈춤' : '정주행';
-      el.btnAutoplay
-        .querySelector('use')
-        .setAttribute('href', info.isAutoPlaying ? '#i-pause' : '#i-play');
+      if (bingeEnabled && ownerId === bingeTailId) ensureBingeAhead();
     },
 
     onZoomChange: (zoomed) => {
@@ -693,6 +859,13 @@ function initEngine() {
     },
 
     onEpisodeEnd: () => {
+      if (bingeEnabled) {
+        const move = resolveAdjacent(state.chapters, bingeTailId, 1);
+        if (move.kind === 'none') toast('마지막 화입니다.');
+        else ensureBingeAhead();
+        return;
+      }
+
       if (hasAdjacent(1)) {
         toast('다음 화로 이동합니다…');
         goChapter(1);
@@ -1605,12 +1778,36 @@ function wireEvents() {
   el.btnNextEp.addEventListener('click', () => goChapter(1));
 
   /* 슬라이더 미리보기 툴팁 */
-  const updateSliderPreview = (val) => {
+  let sliderPreviewOwnedUrl = null;
+  let sliderPreviewRequest = 0;
+  const clearSliderPreview = () => {
+    sliderPreviewRequest++;
+    if (sliderPreviewOwnedUrl) URL.revokeObjectURL(sliderPreviewOwnedUrl);
+    sliderPreviewOwnedUrl = null;
+    el.sliderPreviewImg.removeAttribute('src');
+    el.sliderPreview.classList.remove('show');
+  };
+  const updateSliderPreview = async (val) => {
+    const request = ++sliderPreviewRequest;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    if (request !== sliderPreviewRequest) return;
     const pageNum = parseInt(val, 10);
-    if (!engine || !engine.pages || pageNum < 1 || pageNum > engine.pages.length) return;
-    const page = engine.pages[pageNum - 1];
+    if (!engine || pageNum < 1) return;
+    const page = engine.getPageForCurrentChapter(pageNum);
     if (page && page.url && el.sliderPreviewImg) {
-      el.sliderPreviewImg.src = resolvePageImageUrl(page);
+      let resolved;
+      try {
+        resolved = await resolvePageImageUrl(page);
+      } catch {
+        return;
+      }
+      if (request !== sliderPreviewRequest) {
+        if (resolved.owned) URL.revokeObjectURL(resolved.url);
+        return;
+      }
+      if (sliderPreviewOwnedUrl) URL.revokeObjectURL(sliderPreviewOwnedUrl);
+      sliderPreviewOwnedUrl = resolved.owned ? resolved.url : null;
+      el.sliderPreviewImg.src = resolved.url;
       el.sliderPreviewNum.textContent = `${pageNum}p`;
       el.sliderPreview.classList.add('show');
     }
@@ -1628,15 +1825,12 @@ function wireEvents() {
 
   ['pointerup', 'touchend', 'change'].forEach((evt) => {
     el.slider.addEventListener(evt, () => {
-      el.sliderPreview.classList.remove('show');
+      clearSliderPreview();
       showChrome();
     });
   });
 
-  el.btnAutoplay.addEventListener('click', () => {
-    const playing = engine.toggleAutoPlay();
-    toast(playing ? '정주행 시작' : '정주행 멈춤');
-  });
+  el.btnAutoplay.addEventListener('click', toggleBingeMode);
 
   el.btnZoomReset.addEventListener('click', () => engine.resetZoom());
 
@@ -1756,6 +1950,14 @@ function wireEvents() {
     state.settings.mode = mode;
     saveSettings();
     engine.setMode(mode);
+    if (bingeEnabled && !el.viewport.classList.contains('mode-strip')) {
+      bingeEnabled = false;
+      bingeGeneration++;
+      bingePromise = null;
+      bingeTailId = null;
+      updateBingeButton();
+      toast('정주행은 세로 스크롤에서만 유지됩니다.');
+    }
   });
 
   wireSegmented(el.paperGroup, 'paper', (paper) => {
@@ -1792,14 +1994,6 @@ function wireEvents() {
     } catch {
       toast('토큰을 저장하지 못했습니다.', { error: true });
     }
-  });
-
-  el.speed.addEventListener('change', (e) => {
-    const seconds = Math.min(60, Math.max(1, parseInt(e.target.value, 10) || 5));
-    e.target.value = String(seconds);
-    state.settings.speed = seconds;
-    saveSettings();
-    engine.setAutoPlaySpeed(seconds);
   });
 
   /* 키보드 및 태블릿 물리 볼륨버튼 */
@@ -1842,11 +2036,10 @@ function wireEvents() {
 
   /* 앱 백그라운드 전환 및 강제 종료 시 영구 저장 확정 */
   const syncStateOnLeave = () => {
-    if (state.currentId) {
-      saveLastChapterId(state.currentId);
-      if (engine && engine.currentIndex >= 0) {
-        saveProgress(state.currentId, engine.currentIndex + 1);
-      }
+    const info = engine?.getPageInfo();
+    if (info?.chapterId) {
+      saveLastChapterId(info.chapterId);
+      saveProgress(info.chapterId, info.currentPageNum);
     }
     saveRecentChapters(state.chapters);
   };
@@ -1868,7 +2061,6 @@ function applySettingsToUI() {
   markSegmented(el.dirGroup, 'dir', state.settings.direction);
 
   el.transition.value = state.settings.transition;
-  el.speed.value = String(state.settings.speed);
   el.brightness.value = String(state.settings.brightness);
   try {
     el.proxyToken.value = localStorage.getItem('mv:proxyToken') || '';

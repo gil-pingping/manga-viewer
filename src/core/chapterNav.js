@@ -62,7 +62,14 @@ export function resolveAdjacent(chapters, currentId, delta) {
   if (!current) return { kind: 'none' };
 
   const url = delta > 0 ? current.nextUrl : current.prevUrl;
-  if (url) return { kind: 'fetch', url };
+  if (url) {
+    const loaded = chapters.find((chapter) => (
+      chapter !== current
+      && !chapter.isDemo
+      && chapter.sourceUrl === url
+    ));
+    return loaded ? { kind: 'open', chapter: loaded } : { kind: 'fetch', url };
+  }
 
   const neighbor = realNeighbor(chapters, currentId, delta);
   if (neighbor) return { kind: 'open', chapter: neighbor };
