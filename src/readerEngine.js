@@ -643,6 +643,13 @@ export class ReaderEngine {
     };
 
     const touchMove = (e) => {
+      if (isDragging && this.getEffectiveMode() === 'strip' && e.touches.length === 1) {
+        const t = e.touches[0];
+        const dx = t.clientX - dragStartX;
+        const dy = t.clientY - dragStartY;
+        if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) this.__stripAnchorIndex = null;
+      }
+
       if (isPinching && e.touches.length === 2) {
         const dist = touchDistance(e.touches);
         if (pinchStartDist > 0) {

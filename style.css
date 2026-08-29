@@ -424,13 +424,10 @@ button {
   flex: 1;
 }
 
-/* 세로 스크롤 모드에서는 스크롤이 우선. 가운데만 메뉴 토글로 남긴다 */
+/* 세로 스크롤 모드에서는 투명 탭 레이어가 스크롤 입력을 가로채면 안 된다.
+   가운데 메뉴 탭은 실제 스크롤 컨테이너에서 처리한다. */
 #app:has(.manga-viewport.mode-strip) .tap-layer {
   pointer-events: none;
-}
-
-#app:has(.manga-viewport.mode-strip) .tap-center {
-  pointer-events: auto;
 }
 
 /* ==========================================================================

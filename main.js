@@ -1589,6 +1589,14 @@ function wireEvents() {
     showTouchPulse(e);
     toggleChrome();
   });
+  el.viewport.addEventListener('click', (e) => {
+    if (!el.viewport.classList.contains('mode-strip') || e.target.closest?.('button, a')) return;
+    const bounds = el.viewport.getBoundingClientRect();
+    const x = e.clientX - bounds.left;
+    if (x < bounds.width * 0.26 || x > bounds.width * 0.74) return;
+    showTouchPulse(e);
+    toggleChrome();
+  });
 
   /* 페이지 · 화 이동 */
   el.btnPrevPage.addEventListener('click', () => engine.prevPage());
