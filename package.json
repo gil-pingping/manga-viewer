@@ -1,12 +1,14 @@
 {
   "name": "manga-viewer",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/gen-proxy-token.mjs && vite",
     "build": "node scripts/gen-proxy-token.mjs && vite build && node scripts/check-built-collector.mjs",
     "preview": "vite preview",
+    "test:collector": "node test/collector-loading-check.mjs",
+    "pretest": "npm run test:collector",
     "serve": "npm run build && vite preview --port 4173",
     "deploy": "npm run build && node scripts/build-ota.mjs && wrangler deploy",
     "ota:key": "node scripts/setup-ota-key.mjs",

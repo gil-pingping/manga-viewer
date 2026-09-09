@@ -30,6 +30,7 @@ const BUNDLED = [
   ['selectContentImages', rules.selectContentImages],
   ['backgroundImageUrl', dom.backgroundImageUrl], // findContentRoot·toDescriptor 가 쓴다
   ['countImageish', dom.countImageish], // findContentRoot 가 쓴다
+  ['looksJsRendered', dom.looksJsRendered],
   ['findContentRoot', dom.findContentRoot],
   ['inheritedPageIndex', dom.inheritedPageIndex], // collectDescriptors 가 쓴다
   ['toDescriptor', dom.toDescriptor],
@@ -211,6 +212,7 @@ function collectForNative() {
 
   var pages = selectContentImages(collectDescriptors(document), location.href);
   return JSON.stringify({
+    pending: looksJsRendered(document),
     title: (document.title || '수집한 이미지').split(/[|>]/)[0].trim(),
     coverUrl: extractSeriesCover(document, location.href),
     sourceUrl: location.href,

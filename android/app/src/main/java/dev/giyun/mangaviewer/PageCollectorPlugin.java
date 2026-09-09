@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -46,6 +47,7 @@ public class PageCollectorPlugin extends Plugin {
     private String collectorScript;
     private int navigationGeneration;
     private int failedGeneration = -1;
+    private long navigationStartedAt;
     private boolean silentCollector;
 
     @PluginMethod
@@ -189,6 +191,7 @@ public class PageCollectorPlugin extends Plugin {
                 @Override
                 public void onPageStarted(WebView current, String url, android.graphics.Bitmap favicon) {
                     navigationGeneration++;
+                    navigationStartedAt = SystemClock.elapsedRealtime();
                     failedGeneration = -1;
                     setStatus("페이지 여는 중…");
                 }
@@ -306,6 +309,12 @@ public class PageCollectorPlugin extends Plugin {
                     if (shouldScrollBeforeAccepting(pageCount, scrollOnEmpty)) {
                         setStatus("lazy 이미지 확인 중…");
                         wakeLazyImages(generation, 0);
+                        return;
+                    }
+                    if (result.optBoolean("pending", false) &&
+                        SystemClock.elapsedRealtime() - navigationStartedAt < 20_000) {
+                        setStatus("만화 본문 불러오는 중…");
+                        handler.postDelayed(() -> evaluateCollector(generation, false), 500);
                         return;
                     }
                     if (pageCount == 0) {

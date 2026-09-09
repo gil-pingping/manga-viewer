@@ -66,7 +66,7 @@ export const SPECIFIC_CONTENT_SELECTORS = [
  * 본문으로 뽑혀 엉뚱한 이미지 몇 장을 성공이라고 보고한다.
  * 실측: 추천 3장이 "같은 파일명 모양"이라 본문으로 선택됐다.
  *
- * 실패로 처리하고 북마클릿을 안내하는 편이 정직하다.
+ * 본문이 준비될 때까지 렌더링 경로에서 기다린다.
  */
 export function looksJsRendered(root) {
   for (let i = 0; i < SPECIFIC_CONTENT_SELECTORS.length; i++) {
@@ -78,7 +78,11 @@ export function looksJsRendered(root) {
     }
     for (let j = 0; j < nodes.length; j++) {
       // 확실한 본문 컨테이너를 찾았다 → 그 안이 비면 JS 가 채우는 것이다
-      if (countImageish(nodes[j]) < 3) return true;
+      if (countImageish(nodes[j]) === 0) return true;
+      const slots = nodes[j].querySelectorAll('[data-theme-page]');
+      for (let k = 0; k < slots.length; k++) {
+        if (countImageish(slots[k]) === 0) return true;
+      }
     }
   }
   return false;
@@ -94,9 +98,16 @@ export function backgroundImageUrl(styleText) {
   return m ? m[2].trim() : null;
 }
 
-/** 컨테이너 안의 "이미지다운" 자손 수 */
+/** 컨테이너 또는 페이지 자리 안에서 실제 주소가 있는 이미지 수 */
 export function countImageish(el) {
-  let n = el.querySelectorAll(IMAGE_NODE_SELECTOR).length;
+  let n = 0;
+  const images = Array.from(el.querySelectorAll(IMAGE_NODE_SELECTOR));
+  if (el.matches && el.matches(IMAGE_NODE_SELECTOR)) images.unshift(el);
+  for (let i = 0; i < images.length; i++) {
+    const d = toDescriptor(images[i]);
+    if ([d.dataOriginal, d.dataSrc, d.dataLazySrc, d.dataEcho, d.srcset, d.src, d.bgImage]
+      .some((src) => src && !/^(data:|blob:)/i.test(src.trim()))) n++;
+  }
   if (n > 0) return n;
 
   // <img> 가 없고 배경 이미지로 그리는 뷰어도 있다
@@ -112,7 +123,8 @@ export function countImageish(el) {
  *
  * 후보 중 이미지가 가장 많이 들어있는 것을 고른다. 선택자만 믿으면
  * `article`·`main` 처럼 넓은 것이 잡혀 잡동사니가 섞인다.
- * 3장 미만이면 컨테이너로 인정하지 않고 null (문서 전체를 훑는다).
+ * 명시적인 본문 영역은 비어 있어도 유지한다. 광고가 먼저 렌더되어도
+ * 더 넓은 컨테이너나 문서 전체를 본문으로 대신 선택하지 않는다.
  */
 export function findContentRoot(root) {
   let best = null;
@@ -124,6 +136,14 @@ export function findContentRoot(root) {
       nodes = root.querySelectorAll(CONTENT_ROOT_SELECTORS[i]);
     } catch (e) {
       continue; // 지원 안 되는 선택자는 넘어간다
+    }
+
+    if (nodes.length && SPECIFIC_CONTENT_SELECTORS.indexOf(CONTENT_ROOT_SELECTORS[i]) !== -1) {
+      let specific = nodes[0];
+      for (let j = 1; j < nodes.length; j++) {
+        if (countImageish(nodes[j]) > countImageish(specific)) specific = nodes[j];
+      }
+      return specific;
     }
 
     for (let j = 0; j < nodes.length; j++) {
@@ -200,11 +220,13 @@ export function toDescriptor(el) {
  * imageRules 의 3단 규칙(연번·파일명 모양·디렉터리)이 걸러낸다.
  */
 export function collectDescriptors(root) {
+  if (looksJsRendered(root)) return [];
   const scope = findContentRoot(root) || root;
 
   // 이미지 노드 + 배경 이미지를 가진 노드
   const seen = [];
   const push = (el) => {
+    if (el.closest && el.closest('[data-banner-id], [data-banner-href], .thema-home-banner-cell')) return;
     if (seen.indexOf(el) === -1) seen.push(el);
   };
 
