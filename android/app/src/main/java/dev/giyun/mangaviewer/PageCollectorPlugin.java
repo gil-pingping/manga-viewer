@@ -177,7 +177,9 @@ public class PageCollectorPlugin extends Plugin {
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setSupportMultipleWindows(false);
+        // 새 창 요청을 현재 만화 페이지의 탐색으로 바꾸지 않는다.
+        // 기본 WebChromeClient는 새 창을 만들지 않으므로 팝업은 무시된다.
+        settings.setSupportMultipleWindows(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.setSafeBrowsingEnabled(true);
 

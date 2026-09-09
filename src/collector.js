@@ -31,6 +31,7 @@ const BUNDLED = [
   ['backgroundImageUrl', dom.backgroundImageUrl], // findContentRoot·toDescriptor 가 쓴다
   ['countImageish', dom.countImageish], // findContentRoot 가 쓴다
   ['looksJsRendered', dom.looksJsRendered],
+  ['isNewtokiChapterUrl', dom.isNewtokiChapterUrl],
   ['findContentRoot', dom.findContentRoot],
   ['inheritedPageIndex', dom.inheritedPageIndex], // collectDescriptors 가 쓴다
   ['toDescriptor', dom.toDescriptor],
@@ -188,7 +189,24 @@ function runCollector(viewerOrigin) {
 }
 
 /** Android 보조 WebView가 현재 DOM을 읽고 네이티브 쪽으로 돌려줄 값. */
-function collectForNative() {
+function collectForNative(targetUrl) {
+  if (targetUrl) {
+    var expected = new URL(targetUrl);
+    var current = new URL(location.href);
+    // 팝업·광고 리다이렉트의 이미지를 원래 회차 이름으로 저장하지 않는다.
+    if (current.hostname !== expected.hostname ||
+        current.pathname.replace(/\/$/, '') !== expected.pathname.replace(/\/$/, '') ||
+        Array.from(expected.searchParams).some(function (entry) {
+          return current.searchParams.get(entry[0]) !== entry[1];
+        })) {
+      throw new Error('COLLECTOR_WRONG_PAGE');
+    }
+    // 뉴토끼 회차는 본문 표식이 필수다. 아예 없는 응답도 광고로 대신 채우지 않는다.
+    if (isNewtokiChapterUrl(targetUrl) &&
+        !document.querySelector('[data-theme-viewer-images], .theme-viewer-images')) {
+      return JSON.stringify({ pending: true, sourceUrl: location.href, pages: [] });
+    }
+  }
   function findLink(re) {
     var here = location.href.split('#')[0];
     var anchors = document.querySelectorAll('a[href]');
@@ -238,9 +256,9 @@ export function buildBookmarklet(viewerOrigin) {
 }
 
 /** 외부 페이지의 DOM에서 동기적으로 결과를 반환하는 Android WebView용 스크립트. */
-export function buildNativeCollectorScript() {
+export function buildNativeCollectorScript(targetUrl = null) {
   const fns = serializeBundledFunctions();
-  const body = `${bundledConstants()}\n${fns}\nreturn (${collectForNative.toString()})();`;
+  const body = `${bundledConstants()}\n${fns}\nreturn (${collectForNative.toString()})(${JSON.stringify(targetUrl)});`;
   return `(function(){try{${body}}catch(e){return JSON.stringify({collectorError:String(e&&e.stack||e)})}})();`;
 }
 

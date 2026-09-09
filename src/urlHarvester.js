@@ -8,6 +8,7 @@ import {
 import {
   collectDescriptors,
   looksJsRendered,
+  isNewtokiChapterUrl,
   extractSeriesCover,
   findSeriesListUrl,
   collectLinkDescriptors,
@@ -128,6 +129,13 @@ export class UrlHarvester {
     }
 
     const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // 200 광고·중간 페이지에는 본문 영역 자체가 없을 수 있다. 정적 이미지
+    // 개수로 성공시키지 않고, 요청한 회차를 실제 브라우저에서 확인한다.
+    if (isNewtokiChapterUrl(targetUrl) &&
+        !doc.querySelector('[data-theme-viewer-images], .theme-viewer-images')) {
+      return UrlHarvester.renderFromUrl(targetUrl, { silent: silentRenderedFallback });
+    }
 
     /**
      * 본문 컨테이너가 있는데 비어 있으면 컷은 브라우저가 나중에 채운다.

@@ -14,6 +14,17 @@
 /** 이미지가 될 수 있는 노드 */
 export const IMAGE_NODE_SELECTOR = 'img, source, [data-src], [data-original], [data-lazy-src]';
 
+/** 이 사이트의 회차는 명시적 본문 영역 없이 수집을 성공시킬 수 없다. */
+export function isNewtokiChapterUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return /^newtoki\d*\./i.test(url.hostname) &&
+      /^\/(webtoon|manhwa)\/\d+\/\d+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 본문 컨테이너 후보.
  *
