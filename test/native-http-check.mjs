@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { base64ToBlob, readRangedNativeBytes } from '../src/platform/nativeHttp.js';
+import {
+  base64ToBlob,
+  readRangedNativeBytes,
+  shouldTryDirectImage,
+  noteDirectImageFailure,
+} from '../src/platform/nativeHttp.js';
 
 const bytes = Uint8Array.from([0, 1, 2, 127, 128, 255]);
 const blob = base64ToBlob(Buffer.from(bytes).toString('base64'), 'image/webp');
@@ -33,4 +38,12 @@ assert.deepEqual(ranges, [
   'bytes=524288-786431',
 ]);
 
-console.log('native HTTP 변환 2개 + 1MB bridge 분할 수신 통과');
+// 직접 연결 타임아웃 호스트 메모: 타임아웃만 막고, 다른 실패·다른 호스트는 그대로 시도한다
+assert.equal(shouldTryDirectImage('cdn.example'), true);
+noteDirectImageFailure('cdn.example', new Error('connection refused'));
+assert.equal(shouldTryDirectImage('cdn.example'), true, '타임아웃이 아닌 실패는 호스트를 막지 않는다');
+noteDirectImageFailure('cdn.example', Object.assign(new Error('timeout'), { code: 'SocketTimeoutException' }));
+assert.equal(shouldTryDirectImage('cdn.example'), false, '타임아웃 뒤엔 같은 호스트를 바로 중계로 보낸다');
+assert.equal(shouldTryDirectImage('other.example'), true, '다른 호스트는 영향받지 않는다');
+
+console.log('native HTTP 변환 2개 + 1MB bridge 분할 수신 + 직접 연결 타임아웃 메모 통과');

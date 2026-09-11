@@ -54,6 +54,19 @@ npm test && npm run deploy
 chmod 600 ~/.config/manga-viewer/ota-private.pem
 ```
 
+## 태블릿 화면 원격 진단
+
+USB 디버깅 연결 상태에서 앱 WebView 에 DevTools 프로토콜로 붙는다. Chrome 없이 터미널만으로 된다.
+
+```sh
+adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof dev.giyun.mangaviewer)
+node scripts/tablet-probe.mjs eval "document.getElementById('ota-tag').textContent"
+node scripts/tablet-probe.mjs watch 30      # 콘솔·네트워크 실패 스트리밍
+```
+
+앱을 `am force-stop` 으로 죽이고 바로 다시 켜면 이 기기는 WebView 렌더러가 안 붙어 검은 화면이
+잦다 (evaluate 무응답). 복구·주의사항은 `scripts/tablet-probe.mjs` 머리말 참고.
+
 ## APK를 다시 빌드해야 할 때
 
 Java 플러그인, Capacitor 의존성, AndroidManifest, 권한, 공개키를 바꾼 경우만 해당한다.

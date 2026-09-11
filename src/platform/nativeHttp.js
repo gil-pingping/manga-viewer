@@ -60,9 +60,9 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw new DOMException('중단됨', 'AbortError');
 }
 
-async function nativeGet(options) {
+async function nativeGet(options, { attempts = 2 } = {}) {
   let lastError = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 700));
     try {
       const response = await CapacitorHttp.get({
@@ -264,6 +264,29 @@ export async function fetchAnilifeStreamResource(
   };
 }
 
+/**
+ * 직접 연결이 타임아웃으로 멎은 이미지 호스트.
+ *
+ * 실측(2026-09-10 태블릿): 같은 CDN 이 대부분은 200 인데 간헐적으로 TCP 가 멎어
+ * SocketTimeout 20초 → 재시도 20초 → 그제야 중계로 갔다. 그동안 컷은 검은 자리로 남는다.
+ * 한 번 멎은 호스트는 이 세션 동안 바로 중계로 보낸다.
+ * ponytail: 메모리만 — 앱을 다시 켜면 다시 직접 시도한다. 회선이 낮/밤으로 바뀌는 실측에 맞다.
+ */
+const directTimedOutHosts = new Set();
+const IMAGE_DIRECT_TIMEOUT_MS = 8000;
+
+export function isTimeoutError(err) {
+  return /timeout/i.test(`${err?.code || ''} ${err?.message || ''}`);
+}
+
+export function shouldTryDirectImage(host) {
+  return !directTimedOutHosts.has(host);
+}
+
+export function noteDirectImageFailure(host, err) {
+  if (isTimeoutError(err)) directTimedOutHosts.add(host);
+}
+
 /** 표시·서재 저장 모두 같은 바이트 경로를 쓴다. */
 export async function fetchPageImage(page, { signal } = {}) {
   throwIfAborted(signal);
@@ -285,25 +308,31 @@ export async function fetchPageImage(page, { signal } = {}) {
 
   let direct = null;
   let directError = null;
-  try {
-    const response = await nativeGet({
-      url: target.href,
-      headers: {
-        ...imageRequestHeaders(referer, 'https://newtoki1.org/'),
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-      },
-      responseType: 'blob',
-    });
-    const contentType = header(response.headers, 'content-type') || 'application/octet-stream';
-    const gotHtml = contentType.includes('text/html');
-    const ok = response.status >= 200 && response.status < 300 && !gotHtml;
-    direct = {
-      ok,
-      status: gotHtml ? 502 : response.status || 502,
-      blob: ok ? base64ToBlob(response.data, contentType) : null,
-    };
-  } catch (err) {
-    directError = err;
+  if (shouldTryDirectImage(target.host)) {
+    try {
+      // 재시도 없음(attempts:1)·짧은 timeout — 멎은 회선은 중계가 받쳐준다
+      const response = await nativeGet({
+        url: target.href,
+        headers: {
+          ...imageRequestHeaders(referer, 'https://newtoki1.org/'),
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        },
+        responseType: 'blob',
+        connectTimeout: IMAGE_DIRECT_TIMEOUT_MS,
+        readTimeout: IMAGE_DIRECT_TIMEOUT_MS,
+      }, { attempts: 1 });
+      const contentType = header(response.headers, 'content-type') || 'application/octet-stream';
+      const gotHtml = contentType.includes('text/html');
+      const ok = response.status >= 200 && response.status < 300 && !gotHtml;
+      direct = {
+        ok,
+        status: gotHtml ? 502 : response.status || 502,
+        blob: ok ? base64ToBlob(response.data, contentType) : null,
+      };
+    } catch (err) {
+      directError = err;
+      noteDirectImageFailure(target.host, err);
+    }
   }
   throwIfAborted(signal);
   if (direct?.ok) return direct;

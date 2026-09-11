@@ -99,6 +99,14 @@ function persistCatalogItems(items) {
 
 // 9494f8b 리팩토링 때 실수로 지워졌던 선언들 — 없으면 strict mode에서
 // initEngine()의 `engine = ...` 대입이 ReferenceError로 부팅을 즉사시킨다.
+// APK 의 loggingBehavior=production 은 "항상 로그" 다 — 네이티브 호출마다 요청·응답 전문을
+// console.dir 로 찍는다 (이미지 base64 본문 포함). 콘솔 버퍼가 수십 MB 로 부풀어 태블릿이 느려진다.
+// 브릿지 로그만 끈다. APK 를 다시 빌드할 때 capacitor.config.json 도 'none' 으로 바꿀 것.
+if (window.Capacitor) {
+  window.Capacitor.isLoggingEnabled = false;
+  window.Capacitor.DEBUG = false;
+}
+
 let engine = null;
 let chromeTimer = null;
 let toastTimer = null;
@@ -398,9 +406,11 @@ async function openChapter(chapterId, pageNumber) {
   bingeGeneration++;
   bingePromise = null;
   bingeTailId = chapter.id;
+  // 다음 화 미리 받기를 먼저 건다. loadChapter 가 동기적으로 onPageChange 를 부르고 정주행이
+  // 그 안에서 미리 받기를 찾는다 — 뒤에 걸면 같은 화를 두 번 수집하고 한쪽이 거절당한다.
+  prefetchNextChapter(chapter);
   engine.loadChapter(forEngine, startAt);
   preloadChapterImages(forEngine);
-  prefetchNextChapter(chapter);
   if (bingeEnabled) ensureBingeAhead();
 }
 
@@ -708,7 +718,8 @@ async function goChapter(delta) {
 
     if (move.kind === 'open') {
       resetModeToAuto();
-      await openChapter(move.chapter.id);
+      // 다음/이전 화 버튼은 1쪽부터. 예전에 훑은 화의 저장 위치로 열리면 "다음 화가 중간부터 시작" 으로 보였다
+      await openChapter(move.chapter.id, 1);
       return;
     }
 
@@ -1024,6 +1035,10 @@ function renderEpisodeList(selectedSeriesTitle = null) {
   // 기본 상태: E-Book 책장 그리드 렌더링
   const elements = [];
 
+  // 맨 위에 "이어보기" — 마지막으로 읽던 화로 바로 간다 (부팅 때 자동으로 열려 있으면 모달만 닫는다)
+  const continueCard = buildContinueCard(filteredChapters);
+  if (continueCard) elements.push(continueCard);
+
   for (const group of seriesGroups) {
     const card = document.createElement('div');
     card.className = 'shelf-card';
@@ -1265,6 +1280,40 @@ function renderEpisodeList(selectedSeriesTitle = null) {
 
   el.epList.className = 'ep-list ebook-shelf';
   el.epList.replaceChildren(...elements);
+}
+
+/** 마지막으로 읽던 화 카드. 읽던 화가 목록에 없으면 null */
+function buildContinueCard(chapters) {
+  const lastId = readLastChapterId();
+  const last = chapters.find((chapter) => chapter.id === lastId && !isAnimeItem(chapter));
+  if (!last) return null;
+
+  const total = last.pages?.length || 0;
+  const readTo = Math.min(readProgress()[last.id] || 1, Math.max(total, 1));
+  const { seriesTitle, episodeLabel } = parseSeriesAndEpisode(last.title || '');
+
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'shelf-continue';
+
+  const kicker = document.createElement('span');
+  kicker.className = 'shelf-continue-kicker';
+  kicker.textContent = '▶ 이어보기';
+
+  const title = document.createElement('span');
+  title.className = 'shelf-continue-title';
+  title.textContent = seriesTitle;
+
+  const meta = document.createElement('span');
+  meta.className = 'shelf-continue-meta';
+  meta.textContent = `${last.parsedEpisodeLabel || episodeLabel} · ${readTo} / ${total}쪽`;
+
+  card.append(kicker, title, meta);
+  card.addEventListener('click', () => {
+    closeModal(el.modalEpisodes);
+    if (state.currentId !== last.id) openChapter(last.id);
+  });
+  return card;
 }
 
 /** 선택한 시리즈의 회차 텍스트 목록 전용 뷰 렌더링 */

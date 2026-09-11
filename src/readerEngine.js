@@ -53,12 +53,43 @@ export class ReaderEngine {
     this.onZoomChange = options.onZoomChange || (() => {});
     this.resolvePageUrl = options.resolvePageUrl || ((page) => ({ url: page.url, owned: false }));
 
-    this.handleResize = debounce(() => this.render(), 150);
+    this.handleResize = debounce(() => this.onViewportResize(), 150);
     window.addEventListener('resize', this.handleResize);
     window.addEventListener('orientationchange', this.handleResize);
 
     this.setupGestures();
     this.setupStripTracking();
+  }
+
+  /**
+   * 리사이즈. 태블릿은 시스템 바가 들고 나며 높이만 바뀌는 resize 가 잦다.
+   * strip 은 DOM 을 갈아엎지 않는다 — 재렌더는 가상화한 컷의 실측 높이를 잃어
+   * 같은 scrollTop 이 다른 컷을 가리키게 되고(실측: 정주행 중 다음 화 중간으로 튐),
+   * 가로폭이 바뀌었을 때만 읽던 컷 머리로 다시 앵커한다.
+   */
+  onViewportResize() {
+    if (this.__lastRenderMode !== 'strip' || this.getEffectiveMode() !== 'strip') {
+      this.render();
+      return;
+    }
+    const width = this.container.clientWidth;
+    if (width === this.__stripWidth) return;
+    this.__stripWidth = width;
+    this.scrollStripToIndex(this.currentIndex);
+  }
+
+  /** strip 재렌더 전후로 "몇 번째 컷의 몇 px 아래" 를 기억한다. px 만 저장하면 자리 예약 높이가 바뀔 때 어긋난다. */
+  captureStripAnchor() {
+    const el = this.container.querySelector(`[data-index="${this.currentIndex}"]`);
+    const offset = el ? Math.max(0, this.container.scrollTop - el.offsetTop) : 0;
+    return { index: this.currentIndex, offset };
+  }
+
+  restoreStripAnchor({ index, offset }) {
+    const el = this.container.querySelector(`[data-index="${index}"]`);
+    if (!el) return;
+    const top = el.offsetTop + Math.min(offset, Math.max(0, el.offsetHeight - 1));
+    this.container.scrollTo({ top, behavior: 'instant' });
   }
 
   /* ------------------------------------------------------------------ */
@@ -204,6 +235,7 @@ export class ReaderEngine {
       const holder = img.closest('.manga-page-wrapper, .manga-strip-page');
       holder?.classList.remove('load-failed');
       holder?.classList.add('is-loaded'); // 자리 예약(min-height) 해제
+      holder?.style.removeProperty('min-height'); // 가상화 때 박아둔 높이도 — 남으면 컷 아래 검은 띠
       // 브라우저는 이미 바이트를 읽었다. URL 매핑만 즉시 놓아 원본 Blob을 붙들지 않는다.
       this.releaseOwnedUrl(img);
       this.recordRatio(index, img.naturalWidth, img.naturalHeight);
@@ -313,7 +345,8 @@ export class ReaderEngine {
 
     const modeChanged = this.getEffectiveMode() !== modeBefore;
     const spreadChanged = isSpread !== wasSpread && this.isNearVisible(index);
-    if (modeChanged || spreadChanged) this.render();
+    // strip 은 펼침 개념이 없다 — 여기서 재렌더하면 읽던 위치가 튄다
+    if (modeChanged || (spreadChanged && this.getEffectiveMode() !== 'strip')) this.render();
   }
 
   isNearVisible(index) {
@@ -333,7 +366,8 @@ export class ReaderEngine {
     for (const [url, el] of this.imageCache) {
       if (this.imageCache.size <= MAX_CACHED_IMAGES) break;
       if (keepUrls.has(url)) continue;
-      if (el.isConnected) continue;
+      // fragment 안(아직 붙이기 전)의 img 도 wrapper 가 들고 있다 — 빼면 컷 자리가 비어 검게 뜬다
+      if (el.isConnected || el.parentNode) continue;
       this.imageCache.delete(url);
       this.releaseImageElement(el);
     }
@@ -504,7 +538,7 @@ export class ReaderEngine {
 
   /** 연속 스크롤: 전부 배치하고 브라우저의 lazy 로딩에 맡긴다 */
   renderStrip({ keepScroll = false } = {}) {
-    const savedScrollTop = keepScroll ? this.container.scrollTop : null;
+    const anchor = keepScroll ? this.captureStripAnchor() : null;
     const frag = document.createDocumentFragment();
 
     this.pages.forEach((page, index) => {
@@ -514,10 +548,11 @@ export class ReaderEngine {
 
     this.container.replaceChildren(frag);
     this.observeStripPages();
+    this.__stripWidth = this.container.clientWidth;
 
-    if (savedScrollTop !== null) {
-      // 읽던 위치 유지 (리사이즈·비율 측정으로 인한 재렌더)
-      this.container.scrollTo({ top: savedScrollTop, behavior: 'instant' });
+    if (anchor) {
+      // 읽던 컷 유지 (모드·방향 변경으로 인한 재렌더). 새 DOM 의 자리 예약 높이는 이전과 다르다
+      this.restoreStripAnchor(anchor);
       return;
     }
     // 자리 예약 높이가 아직 추정치다 — 첫 실측 비율이 잡히면 recordRatio 가
@@ -659,7 +694,10 @@ export class ReaderEngine {
             const img = this.getImageElement(index);
             if (img && !entry.target.contains(img)) {
               entry.target.prepend(img);
-              if (img.complete && img.naturalWidth > 0) entry.target.classList.add('is-loaded');
+              if (img.complete && img.naturalWidth > 0) {
+                entry.target.classList.add('is-loaded');
+                entry.target.style.removeProperty('min-height');
+              }
             }
             entry.target.classList.remove('is-virtualized');
           } else {

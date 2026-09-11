@@ -38,6 +38,19 @@ public class PageCollectorPlugin extends Plugin {
 
     private static final String TAG = "PageCollector";
     private static final int MAX_SCROLL_TICKS = 30;
+
+    /**
+     * 무음 수집의 전체 제한 시간.
+     *
+     * 왜 필요한가: 수집을 끝내는 유일한 방아쇠가 onPageFinished 다. 서버가 소켓을 물고
+     * 응답하지 않으면 그게 영원히 안 오고, activeCall 이 남아 그 뒤 모든 수집이
+     * "이미 다른 페이지를 열고 있습니다" 로 거절된다 — 앱을 다시 켜야 풀렸다.
+     * 무음 창은 터치가 통과하도록 만들어 두어 사용자가 취소할 방법도 없다.
+     *
+     * 60초 근거: 페이지 이동 20초(FETCH_TIMEOUT_MS) + 본문 대기 20초 + lazy 스크롤 3초가
+     * 정상 최악값이다. 그 위로 여유를 둔다.
+     */
+    private static final long SILENT_COLLECT_TIMEOUT_MS = 60_000;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Dialog dialog;
     private WebView webView;
@@ -49,6 +62,7 @@ public class PageCollectorPlugin extends Plugin {
     private int failedGeneration = -1;
     private long navigationStartedAt;
     private boolean silentCollector;
+    private Runnable collectTimeout;
 
     @PluginMethod
     public void collect(PluginCall call) {
@@ -70,6 +84,13 @@ public class PageCollectorPlugin extends Plugin {
         activeCall = call;
         collectorScript = script;
         silentCollector = Boolean.TRUE.equals(call.getBoolean("silent", false));
+
+        // 사람이 보는 창에는 취소 버튼이 있다. 무음 창만 스스로 풀려야 한다.
+        if (silentCollector) {
+            collectTimeout = () -> finishError("수집 시간이 초과됐습니다.");
+            handler.postDelayed(collectTimeout, SILENT_COLLECT_TIMEOUT_MS);
+        }
+
         getActivity().runOnUiThread(() -> openCollector(url));
     }
 
@@ -371,6 +392,10 @@ public class PageCollectorPlugin extends Plugin {
 
     private void closeCollector() {
         navigationGeneration++;
+        if (collectTimeout != null) {
+            handler.removeCallbacks(collectTimeout);
+            collectTimeout = null;
+        }
         activeCall = null;
         collectorScript = null;
         if (dialog != null) {

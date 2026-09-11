@@ -230,7 +230,15 @@ function parsedObject(raw) {
   }
 }
 
-/** localStorage가 없거나 깨졌으면 kv를 복구 원본으로 쓰고, 있으면 kv에 즉시 반영한다. */
+/**
+ * IndexedDB kv 가 복구 원본이다. localStorage 는 kv 가 없을 때만 쓴다.
+ *
+ * 왜 뒤집었나 (2026-09-10 태블릿 실측): 앱 프로세스가 죽은 뒤 다시 켜면 localStorage 가
+ * 한 달 전 스냅샷(8월 11일 회차)으로 돌아와 있었다 — WebView 가 디스크에 쓰지 못한 채
+ * 메모리에서만 살았던 것. 같은 순간 IndexedDB 는 그날 읽은 화까지 다 갖고 있었다.
+ * 그동안 "새로고침하면 처음부터" 로 보였던 게 이것이다. 두 값은 항상 같은 순서로
+ * 쓰이므로(localStorage → kv) kv 가 있으면 그게 최신이거나 같다.
+ */
 export async function restoreStateFromKv(state) {
   const [kvSettings, kvProgress, kvLastChapterId, kvInitialized] = await Promise.all([
     getKv('settings'),
@@ -240,13 +248,13 @@ export async function restoreStateFromKv(state) {
   ]);
 
   const localSettings = parsedObject(localValue(SETTINGS_KEY));
-  if (localSettings) {
+  if (kvSettings && typeof kvSettings === 'object') {
+    state.settings = { ...defaultSettings, ...kvSettings };
+    setLocalValue(SETTINGS_KEY, JSON.stringify(kvSettings));
+  } else if (localSettings) {
     delete localSettings.mode;
     state.settings = { ...defaultSettings, ...localSettings };
     await putKv('settings', localSettings);
-  } else if (kvSettings && typeof kvSettings === 'object') {
-    state.settings = { ...defaultSettings, ...kvSettings };
-    setLocalValue(SETTINGS_KEY, JSON.stringify(kvSettings));
   } else {
     const { mode, ...settings } = state.settings;
     setLocalValue(SETTINGS_KEY, JSON.stringify(settings));
@@ -254,12 +262,12 @@ export async function restoreStateFromKv(state) {
   }
 
   const localProgress = parsedObject(localValue(PROGRESS_KEY));
-  if (localProgress) {
-    progressState = localProgress;
-    await putKv('progress', localProgress);
-  } else if (kvProgress && typeof kvProgress === 'object') {
+  if (kvProgress && typeof kvProgress === 'object') {
     progressState = { ...kvProgress };
     setLocalValue(PROGRESS_KEY, JSON.stringify(kvProgress));
+  } else if (localProgress) {
+    progressState = localProgress;
+    await putKv('progress', localProgress);
   } else {
     progressState = {};
     setLocalValue(PROGRESS_KEY, '{}');
@@ -267,23 +275,23 @@ export async function restoreStateFromKv(state) {
   }
 
   const localLastChapterId = localValue(LAST_CHAPTER_KEY);
-  if (localLastChapterId) {
-    lastChapterIdState = localLastChapterId;
-    await putKv('lastChapterId', localLastChapterId);
-  } else if (typeof kvLastChapterId === 'string' && kvLastChapterId) {
+  if (typeof kvLastChapterId === 'string' && kvLastChapterId) {
     lastChapterIdState = kvLastChapterId;
     setLocalValue(LAST_CHAPTER_KEY, kvLastChapterId);
+  } else if (localLastChapterId) {
+    lastChapterIdState = localLastChapterId;
+    await putKv('lastChapterId', localLastChapterId);
   } else {
     lastChapterIdState = null;
   }
 
   const localInitialized = localValue(INITIALIZED_KEY);
-  if (localInitialized != null) {
-    state.initialized = localInitialized === 'true';
-    await putKv('initialized', state.initialized);
-  } else if (typeof kvInitialized === 'boolean') {
+  if (typeof kvInitialized === 'boolean') {
     state.initialized = kvInitialized;
     setLocalValue(INITIALIZED_KEY, String(kvInitialized));
+  } else if (localInitialized != null) {
+    state.initialized = localInitialized === 'true';
+    await putKv('initialized', state.initialized);
   } else {
     state.initialized = false;
   }

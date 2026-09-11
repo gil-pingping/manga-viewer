@@ -240,6 +240,73 @@ try {
   );
   assert.equal(appendResult.localGoToIndex, 3, 'goToPage는 현재 화 안에서 이동해야 한다');
 
+  const rebuildResult = await page.evaluate(async () => {
+    document.body.replaceChildren();
+    const container = document.createElement('main');
+    container.className = 'manga-viewport mode-strip';
+    Object.assign(container.style, {
+      position: 'relative', inset: 'auto', width: '800px', height: '300px', overflowY: 'auto', scrollBehavior: 'auto',
+    });
+    document.body.appendChild(container);
+
+    const { ReaderEngine } = await import('/src/readerEngine.js');
+    const engine = new ReaderEngine({
+      container,
+      mode: 'strip',
+      resolvePageUrl: () => new Promise(() => {}),
+    });
+    const pages = Array.from({ length: 60 }, (_, index) => ({ url: `evict-${index}`, pageNumber: index + 1 }));
+    engine.loadChapter({ id: 'evict', sourceUrl: 'https://example.test/webtoon/9', pages }, 30);
+    const wrappers = [...container.querySelectorAll('.manga-strip-page')];
+    const withImg = wrappers.filter((wrapper) => wrapper.querySelector('img.manga-img')).length;
+
+    // 가상화 때 박은 inline min-height 는 이미지가 뜨면 풀려야 한다 (남으면 컷 아래 검은 띠)
+    const five = wrappers[5];
+    five.style.minHeight = '999px';
+    five.querySelector('img.manga-img').dispatchEvent(new Event('load'));
+    const minHeightCleared = five.style.minHeight === '';
+
+    // 컷 높이를 제각각 만들고 12번 컷의 40px 아래에서 시작
+    wrappers.forEach((wrapper, index) => {
+      wrapper.style.height = `${200 + (index % 3) * 100}px`;
+      wrapper.style.minHeight = wrapper.style.height;
+      wrapper.style.aspectRatio = 'auto';
+    });
+    engine.currentIndex = 12;
+    const target = wrappers[12];
+    container.scrollTop = target.offsetTop + 40;
+    const before = container.scrollTop;
+
+    // 높이만 바뀐 resize(시스템 바): DOM 도 스크롤도 건드리지 않아야 한다
+    engine.onViewportResize();
+    const sameDomAfterResize = container.firstElementChild === wrappers[0] && container.scrollTop === before;
+
+    // 실제 재렌더(모드·방향 변경): 자리 예약 높이가 달라져도 12번 컷 +40px 에 있어야 한다
+    engine.render();
+    const fresh = container.querySelector('[data-index="12"]');
+    return {
+      total: wrappers.length,
+      withImg,
+      minHeightCleared,
+      sameDomAfterResize,
+      rebuilt: fresh !== target,
+      anchoredOffset: container.scrollTop - fresh.offsetTop,
+    };
+  });
+  assert.equal(rebuildResult.total, 60);
+  assert.equal(
+    rebuildResult.withImg,
+    60,
+    '캐시 상한(40)을 넘는 화도 모든 컷 wrapper 가 img 를 가져야 한다 (fragment 안 img 를 evict 하면 컷이 검게 뜬다)'
+  );
+  assert.equal(rebuildResult.minHeightCleared, true, '이미지가 뜨면 가상화 때 박은 min-height 를 풀어야 한다');
+  assert.equal(rebuildResult.sameDomAfterResize, true, '높이만 바뀐 resize 는 strip DOM 과 스크롤을 건드리지 않아야 한다');
+  assert.equal(rebuildResult.rebuilt, true, 'render() 는 strip 을 다시 그려야 한다 (fixture 확인)');
+  assert.ok(
+    Math.abs(rebuildResult.anchoredOffset - 40) <= 1,
+    `재렌더 뒤에도 읽던 컷(12) +40px 에 있어야 한다 (지금 ${rebuildResult.anchoredOffset}px)`
+  );
+
   const bottomPoint = await page.evaluate(async () => {
     document.body.replaceChildren();
     const container = document.createElement('main');
