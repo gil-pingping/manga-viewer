@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import {
   findChapter,
+  isSameSeries,
   indexOfChapter,
   realNeighbor,
   hasAdjacent,
@@ -254,6 +255,30 @@ check('표지 주소는 챕터에 남고, 나중에 빈 값이 와도 지워지�
   );
   assert.equal(again.chapter.coverUrl, 'https://cdn.test/cover.jpg');
   assert.equal(again.isNew, false);
+});
+
+console.log('\n인접 이동이 작품을 넘어갔는지 판정');
+
+check('같은 작품의 다른 회차는 정상 이동이다', () => {
+  assert.equal(isSameSeries('헬퍼 2 : 킬베로스 42화', '헬퍼 2 : 킬베로스 43화'), true);
+});
+
+// 실측 회귀: ?toon=184&num=42 의 다음 주소로 저장된 ?toon=185&num=42 를 열어보니
+// 호박장군 41화였다 (toon 은 작품 id 다). 이걸 통과시키면 다른 작품이 조용히 열린다
+check('다음 화 링크가 다른 작품으로 튀면 막는다', () => {
+  assert.equal(
+    isSameSeries('헬퍼 2 : 킬베로스 42화', '호박장군 41화'),
+    false,
+    '작품이 바뀌었는데 통과시키면 "다음 화"가 남의 만화를 연다'
+  );
+});
+
+// 번호를 못 읽는 제목으로 막으면 번호 표기가 없는 사이트에서 이동 자체가 죽는다
+check('회차 번호를 못 읽는 제목은 이동을 막지 않는다', () => {
+  assert.equal(isSameSeries('헬퍼 2 : 킬베로스 42화', '어떤 만화'), true);
+  assert.equal(isSameSeries('헬퍼 2 : 킬베로스 42화', '프롤로그'), true);
+  assert.equal(isSameSeries('', '호박장군 41화'), true);
+  assert.equal(isSameSeries(null, undefined), true);
 });
 
 console.log(`\n${passed}개 통과`);

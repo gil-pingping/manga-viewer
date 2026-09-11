@@ -455,13 +455,67 @@ function proxiedUrl(imgUrl, refererUrl) {
   return path;
 }
 
-/** 해시만 다른 자기 자신 링크(#none 등)는 이전/다음 화가 아니다 */
-function findAdjacentLink(doc, pattern, origin, currentUrl) {
+/**
+ * 이전/다음 화 화살표에 흔히 붙는 class 토큰.
+ *
+ * 부분 일치로 보면 안 된다 — `preload`·`preview` 같은 이름이 "이전화"로 잡힌다.
+ * 토큰 경계(`next-page`, `prev_page`, `nextpage`)까지만 인정한다.
+ */
+const ADJACENT_CLASS = {
+  next: /(?:^|[\s_-])(?:next|nextpage)(?:[\s_-]|$)/i,
+  prev: /(?:^|[\s_-])(?:prev|previous|prevpage|prepage|pre)(?:[\s_-]|$)/i,
+};
+
+/**
+ * 링크 자신이나 그것을 감싼 li/div 가 방향 class 를 달고 있는가.
+ *
+ * 실측(wftoon227.com): 옆 화살표는 `<div class="nextpage">` 안에 들어 있고
+ * 링크 본문은 아이콘 폰트(`<i class="fa fa-chevron-right">`)뿐이다.
+ * 한 요소에 양방향 class 가 같이 붙어 있으면(`class="prev next"` 처럼 한 줄에
+ * 두 화살표가 든 바) 방향을 단정할 수 없으므로 쓰지 않는다.
+ */
+function hasAdjacentClass(anchor, forward) {
+  const want = forward ? ADJACENT_CLASS.next : ADJACENT_CLASS.prev;
+  const avoid = forward ? ADJACENT_CLASS.prev : ADJACENT_CLASS.next;
+
+  // 링크 자신 + 감싼 li/div 까지. 더 올라가면 페이지 전체 래퍼까지 먹는다
+  for (let el = anchor, depth = 0; el && depth < 4; depth++) {
+    const cls = el.getAttribute?.('class') || '';
+    if (cls && want.test(cls) && !avoid.test(cls)) return true;
+    el = el.parentElement;
+    if (el && el.tagName && !/^(LI|DIV)$/i.test(el.tagName)) break;
+  }
+  return false;
+}
+
+/**
+ * 사이트가 준 이전/다음 화 링크를 찾는다. 방향은 호출자가 준 패턴에서 읽는다.
+ *
+ * 실측(wftoon227.com): 아래쪽 바는 `<li class="next"><a>다음화</a></li>` 처럼
+ * 글자를 갖고 있지만, 옆 화살표는 `<a title="다음화">` 에 아이콘만 들어 있어
+ * textContent 만 보면 못 찾는다. title 과 감싼 요소의 class 까지 본다.
+ *
+ * 여기서 못 찾으면 호출자가 bumpEpisodeParam 추측으로 내려간다. 그 추측이
+ * `?toon=184&num=42` 의 toon(= 작품 id)을 +1 해서 "다음 화"가 다른 작품
+ * (호박장군 41화)으로 튄 실사고가 있었다 — 진짜 링크를 찾는 게 1차 방어다.
+ *
+ * export 인 이유: 유일한 공개 경로인 fetchFromUrl 은 네트워크와 DOMParser 를
+ * 요구하는데 Node 에는 DOMParser 가 없다. 그 넷을 다 세우는 대신 이 함수만
+ * 최소 DOM 스텁으로 점검한다 (test/harvester-check.mjs).
+ */
+export function findAdjacentLink(doc, pattern, origin, currentUrl) {
   const here = (currentUrl || '').split('#')[0];
+  // 인수를 늘리지 않는다. 호출자가 주는 패턴 자체가 방향을 말해준다
+  const forward = pattern.test('다음화') || pattern.test('next');
+  // class 만 맞은 링크는 글자/title 이 맞은 링크에 밀린다 (문서 순서로 뒤집히면 안 된다)
+  let byClassOnly = null;
+
   for (const a of doc.querySelectorAll('a[href]')) {
-    const text = (a.textContent || '').trim();
-    const rel = a.getAttribute('rel') || '';
-    if (!pattern.test(text) && !pattern.test(rel)) continue;
+    const labelled =
+      pattern.test((a.textContent || '').trim())
+      || pattern.test(a.getAttribute('title') || '')
+      || pattern.test(a.getAttribute('rel') || '');
+    if (!labelled && !hasAdjacentClass(a, forward)) continue;
 
     const raw = a.getAttribute('href');
     if (!raw) continue;
@@ -471,10 +525,19 @@ function findAdjacentLink(doc, pattern, origin, currentUrl) {
     } catch {
       continue;
     }
+    /**
+     * 경계에서 사이트가 404 를 주지 않는다. 실측: 1화에서 이전화 링크가
+     * `javascript:alert('이전화가없습니다.');` 다. 이걸 회차 주소로 돌려주면
+     * 경계가 "깨진 이동"이 된다. mailto:·# 같은 것도 회차 주소가 아니다.
+     */
+    if (!/^https?:\/\//i.test(href)) continue;
+    // 해시만 다른 자기 자신 링크(#none 등)는 이전/다음 화가 아니다
     if (href.split('#')[0] === here) continue;
-    return href;
+
+    if (labelled) return href;
+    if (!byClassOnly) byClassOnly = href;
   }
-  return null;
+  return byClassOnly;
 }
 
 function cleanTitle(rawTitle) {

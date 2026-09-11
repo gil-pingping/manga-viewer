@@ -148,6 +148,50 @@ export function proxyAuthToken() {
   }
 }
 
+/**
+ * 페이지 바이트를 어떤 charset 으로 읽을지 고른다. 순수 함수 — 규칙을 테스트로 고정한다.
+ *
+ * 실측(2026-09-11 wftoon227.com): 새로 보는 만화 사이트가 UTF-8 이 아니라 CP949 다.
+ * curl 로 받은 본문이 `iconv -f CP949` 로만 풀리고, `<title>` 없이 이름은
+ * `<meta property="og:title" content="헬퍼 2 : 킬베로스 42화">` 에만 있다.
+ * 그 바이트를 UTF-8 로 읽으면 제목이 `���� 2 : ų���ν� 42ȭ` 로 뭉개지고(태블릿
+ * IndexedDB 실측), 주소에는 U+FFFD 를 다시 인코딩한 `%EF%BF%BD` 가 박혀 저장된다.
+ *
+ * 진짜 피해는 글자가 아니라 이동이다: 수집기는 페이지 링크의 `다음화`/`이전화` 글자로
+ * 다음 화를 찾는데 뭉개진 글자는 절대 안 맞아 쿼리 증가 추측으로 떨어졌고, 하필 작품 id 를
+ * 올려서 "다음 화" 가 다른 만화로 갔다(실측: `?toon=185&num=42` 는 `호박장군 41화`).
+ *
+ * 순서: 응답 헤더 charset → 본문 앞부분 meta 스니핑 → UTF-8.
+ * 헤더가 먼저인 이유: 중계 Worker 가 이미 UTF-8 로 바꿔 보낸 본문에도 원본의
+ * `<meta charset=euc-kr>` 이 그대로 남아 있다 — 헤더를 믿어야 두 번 디코딩하지 않는다.
+ */
+const CP949_ALIASES = /^(euc-kr|euckr|ks_c_5601-1987|ks_c_5601|ksc5601|ksc_5601|cp949|(x-)?windows-949)$/;
+const META_CHARSET = /<meta[^>]+charset\s*=\s*["']?\s*([\w:.+-]+)/i;
+
+export function pickCharset(contentType, bytes) {
+  const fromHeader = /charset\s*=\s*["']?\s*([\w:.+-]+)/i.exec(contentType || '')?.[1];
+  // 앞 2KB 만, latin1(절대 throw 하지 않는 단일바이트)로 스니핑한다 — 잘못된 디코딩이
+  // 스니핑 자체를 깨뜨리면 안 된다. meta 는 ASCII 라 이걸로 충분하다.
+  const head = fromHeader
+    ? ''
+    : new TextDecoder('latin1').decode((bytes || new Uint8Array()).slice(0, 2048));
+  const label = (fromHeader || META_CHARSET.exec(head)?.[1] || 'utf-8').trim().toLowerCase();
+  // CP949 한 무리는 전부 같은 디코더다. 이 WebView 의 TextDecoder 는 `euc-kr` 라벨만 받는다
+  return CP949_ALIASES.test(label) ? 'euc-kr' : label;
+}
+
+/** 고른 charset 으로 실제 디코딩한다. 모르는 라벨이면 UTF-8 — 여기서 throw 하면 화면이 빈다. */
+export function decodePageBytes(bytes, contentType) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || 0);
+  const label = pickCharset(contentType, view);
+  try {
+    return new TextDecoder(label).decode(view);
+  } catch {
+    // TextDecoder 생성자만 던진다(모르는 라벨 → RangeError). 디코딩 자체는 안 던진다
+    return new TextDecoder('utf-8').decode(view);
+  }
+}
+
 /** 웹은 기존 Worker, APK는 태블릿 네트워크로 대상 HTML을 직접 받는다. */
 export async function fetchPageDocument(targetUrl) {
   if (!isNativeApp()) {
@@ -158,10 +202,13 @@ export async function fetchPageDocument(targetUrl) {
   let direct = null;
   let directError = null;
   try {
+    // responseType:'blob' — 'text' 로 받으면 CapacitorHttp 가 바이트를 UTF-8 로 먼저
+    // 디코딩해 넘긴다. CP949 사이트에서는 그 시점에 글자가 이미 죽고, 한 번 죽은 바이트는
+    // 되돌릴 방법이 없다(이미지 경로에서 실측한 교훈). 그래서 바이트로 받아 우리가 읽는다.
     direct = await nativeGet({
       url: target.href,
       headers: { ...pageRequestHeaders(target.origin + '/'), 'User-Agent': navigator.userAgent },
-      responseType: 'text',
+      responseType: 'blob',
     });
   } catch (err) {
     directError = err;
@@ -175,7 +222,7 @@ export async function fetchPageDocument(targetUrl) {
         const viaWorker = await nativeGet({
           url: `${OTA_ORIGIN}/api/fetch-page?url=${encodeURIComponent(target.href)}`,
           headers: { 'X-MV-Token': token },
-          responseType: 'text',
+          responseType: 'blob',
         });
         if (viaWorker.status < 400) direct = viaWorker;
       } catch {
@@ -186,10 +233,22 @@ export async function fetchPageDocument(targetUrl) {
 
   if (!direct) throw directError || new Error('페이지를 가져오지 못했습니다.');
   const status = direct.status >= 200 && direct.status <= 599 ? direct.status : 502;
-  const body = typeof direct.data === 'string' ? direct.data : JSON.stringify(direct.data);
+
+  let body;
+  try {
+    const bytes = new Uint8Array(await base64ToBlob(direct.data).arrayBuffer());
+    body = decodePageBytes(bytes, header(direct.headers, 'content-type'));
+  } catch {
+    // 브릿지가 base64 대신 이미 디코딩한 문자열을 넘긴 경우(readData 는 content-type 에
+    // application/json 이 있으면 responseType 을 무시하고 텍스트로 읽는다). 바이트가 없으니
+    // 복구는 불가 — 예전 동작 그대로 넘겨 최소한 나빠지지는 않게 한다.
+    body = typeof direct.data === 'string' ? direct.data : JSON.stringify(direct.data);
+  }
+
+  // 우리가 이미 제대로 디코딩했다 — 아래쪽(DOMParser 등)이 다시 charset 을 추측하면 안 된다
   return new Response(body, {
     status,
-    headers: { 'Content-Type': header(direct.headers, 'content-type') || 'text/html' },
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
 

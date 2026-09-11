@@ -38,6 +38,10 @@ const BUNDLED = [
   ['collectDescriptors', dom.collectDescriptors],
   ['extractSeriesCover', dom.extractSeriesCover],
   ['findSeriesListUrl', dom.findSeriesListUrl],
+  // 이 파일 아래에 정의. runCollector·collectForNative 두 본체가 같이 쓴다 —
+  // 예전엔 본체마다 findLink 복붙이 하나씩 있었고, urlHarvester 만 고치면
+  // 기기 경로는 옛 규칙으로 남았다
+  ['findAdjacentChapterLink', findAdjacentChapterLink],
 ];
 
 /**
@@ -77,6 +81,90 @@ function bundledConstants() {
 }
 
 /**
+ * 사이트가 준 이전/다음 화 링크를 찾는다. 방향은 호출자가 준 패턴에서 읽는다.
+ *
+ * urlHarvester.findAdjacentLink 와 같은 규칙이다. 왜 사본이 여기 또 있나:
+ * 저쪽은 정적 HTTP 경로(DOMParser)의 모듈 함수라 주입 스코프에서 못 쓴다.
+ * 이쪽은 BUNDLED 로 실려 북마클릿·네이티브 WebView 두 본체가 같은 정의를
+ * 쓴다 (본체 안 복붙 두 개를 여기 하나로 합쳤다). 규칙을 고치면 양쪽 —
+ * 이 함수와 urlHarvester.findAdjacentLink — 을 같이 고쳐야 한다.
+ *
+ * 실측(wftoon227.com): 아래쪽 바는 `<li class="next"><a>다음화</a></li>` 로
+ * 글자를 갖지만, 옆 화살표는 `<a title="다음화">` 안에 아이콘 폰트
+ * (`<i class="fa fa-chevron-right">`)뿐이라 textContent 가 빈 문자열이다.
+ * title 과 감싼 요소의 class 까지 봐야 찾는다.
+ *
+ * 여기서 못 찾으면 앱이 주소의 숫자를 ±1 해서 추측한다. 그 추측이
+ * `?toon=184&num=42` 의 toon(= 작품 id)을 올려서 "다음 화"가 다른 작품
+ * (호박장군 41화)으로 튄 실사고가 있었다 — 진짜 링크를 찾는 게 1차 방어다.
+ *
+ * 이 함수도 문자열화되므로 모듈 스코프의 어떤 것도 참조하면 안 된다.
+ * 정규식을 상수로 빼지 않고 안에 둔 이유다.
+ */
+function findAdjacentChapterLink(doc, re, currentUrl) {
+  // 인수를 늘리지 않는다. 호출자가 주는 패턴 자체가 방향을 말해준다
+  var forward = re.test('다음화') || re.test('next');
+  /**
+   * class 는 부분 일치로 보면 안 된다 — `preload`·`preview` 같은 이름이
+   * "이전화"로 잡힌다. 토큰 경계(`next-page`, `prev_page`, `nextpage`)까지만.
+   */
+  var NEXT_CLASS = /(?:^|[\s_-])(?:next|nextpage)(?:[\s_-]|$)/i;
+  var PREV_CLASS = /(?:^|[\s_-])(?:prev|previous|prevpage|prepage|pre)(?:[\s_-]|$)/i;
+  var want = forward ? NEXT_CLASS : PREV_CLASS;
+  var avoid = forward ? PREV_CLASS : NEXT_CLASS;
+  // 해시만 다른 자기 자신 링크(#none 등)는 인접 화가 아니다
+  var here = (currentUrl || '').split('#')[0];
+  // class 만 맞은 링크는 글자/title 이 맞은 링크에 밀린다 (문서 순서로 뒤집히면 안 된다)
+  var byClassOnly = null;
+  var anchors = doc.querySelectorAll('a[href]');
+
+  for (var i = 0; i < anchors.length; i++) {
+    var a = anchors[i];
+    var labelled =
+      re.test((a.textContent || '').trim()) ||
+      re.test(a.getAttribute('title') || '') ||
+      re.test(a.getAttribute('rel') || '');
+
+    /**
+     * 링크 자신 + 감싼 li/div 까지만 class 를 본다. 더 올라가면 페이지 전체
+     * 래퍼를 먹는다. 한 요소에 양방향 class 가 같이 붙어 있으면
+     * (`class="prev next"` 처럼 한 줄에 두 화살표가 든 바) 방향을 단정할 수 없다.
+     */
+    var byClass = false;
+    for (var el = a, depth = 0; el && depth < 4; depth++) {
+      var cls = el.getAttribute('class') || '';
+      if (cls && want.test(cls) && !avoid.test(cls)) {
+        byClass = true;
+        break;
+      }
+      el = el.parentElement;
+      if (el && el.tagName && !/^(LI|DIV)$/i.test(el.tagName)) break;
+    }
+    if (!labelled && !byClass) continue;
+
+    var raw = a.getAttribute('href');
+    if (!raw) continue;
+    var href;
+    try {
+      href = new URL(raw, currentUrl).href;
+    } catch (e) {
+      continue;
+    }
+    /**
+     * 경계에서 사이트가 404 를 주지 않는다. 실측: 1화에서 이전화 링크가
+     * `javascript:alert('이전화가없습니다.');` 다. 이걸 회차 주소로 돌려주면
+     * 경계가 "깨진 이동"이 된다. mailto:·# 같은 것도 회차 주소가 아니다.
+     */
+    if (!/^https?:\/\//i.test(href)) continue;
+    if (href.split('#')[0] === here) continue;
+
+    if (labelled) return href;
+    if (!byClassOnly) byClassOnly = href;
+  }
+  return byClassOnly;
+}
+
+/**
  * 페이지에서 실행되는 본체.
  *
  * 이 함수도 통째로 문자열화되므로 모듈 스코프의 어떤 것도 참조하면 안 된다.
@@ -86,28 +174,6 @@ function runCollector(viewerOrigin) {
   // 뷰어 탭을 먼저 연다. 수집이 끝난 뒤에 열면 팝업 차단에 걸린다.
   // 해시 없이 열고, 수집이 끝나면 이 탭의 location 에 페이로드를 실어 보낸다.
   var viewerTab = window.open(viewerOrigin + '/', '_blank');
-
-  function findLink(re) {
-    // 해시만 다른 자기 자신 링크(#none 등)는 인접 화가 아니다
-    var here = location.href.split('#')[0];
-    var anchors = document.querySelectorAll('a[href]');
-    for (var i = 0; i < anchors.length; i++) {
-      var a = anchors[i];
-      var text = (a.textContent || '').trim();
-      if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
-      var raw = a.getAttribute('href');
-      if (!raw) continue;
-      var href;
-      try {
-        href = new URL(raw, location.href).href;
-      } catch (e) {
-        continue;
-      }
-      if (href.split('#')[0] === here) continue;
-      return href;
-    }
-    return null;
-  }
 
   /** lazy 이미지를 깨우기 위해 페이지를 훑어 내린다 (최대 약 3초) */
   function wakeLazyImages(done) {
@@ -141,8 +207,8 @@ function runCollector(viewerOrigin) {
       title: (document.title || '수집한 이미지').split(/[|>]/)[0].trim(),
       coverUrl: extractSeriesCover(document, location.href),
       sourceUrl: location.href,
-      prevUrl: findLink(/이전화|이전\s*화|prev/i),
-      nextUrl: findLink(/다음화|다음\s*화|next/i),
+      prevUrl: findAdjacentChapterLink(document, /이전화|이전\s*화|prev/i, location.href),
+      nextUrl: findAdjacentChapterLink(document, /다음화|다음\s*화|next/i, location.href),
       pages: pages,
     };
 
@@ -207,26 +273,6 @@ function collectForNative(targetUrl) {
       return JSON.stringify({ pending: true, sourceUrl: location.href, pages: [] });
     }
   }
-  function findLink(re) {
-    var here = location.href.split('#')[0];
-    var anchors = document.querySelectorAll('a[href]');
-    for (var i = 0; i < anchors.length; i++) {
-      var a = anchors[i];
-      var text = (a.textContent || '').trim();
-      if (!re.test(text) && !re.test(a.getAttribute('rel') || '')) continue;
-      var raw = a.getAttribute('href');
-      if (!raw) continue;
-      var href;
-      try {
-        href = new URL(raw, location.href).href;
-      } catch (e) {
-        continue;
-      }
-      if (href.split('#')[0] === here) continue;
-      return href;
-    }
-    return null;
-  }
 
   var pages = selectContentImages(collectDescriptors(document), location.href);
   return JSON.stringify({
@@ -234,8 +280,8 @@ function collectForNative(targetUrl) {
     title: (document.title || '수집한 이미지').split(/[|>]/)[0].trim(),
     coverUrl: extractSeriesCover(document, location.href),
     sourceUrl: location.href,
-    prevUrl: findLink(/이전화|이전\s*화|prev/i),
-    nextUrl: findLink(/다음화|다음\s*화|next/i),
+    prevUrl: findAdjacentChapterLink(document, /이전화|이전\s*화|prev/i, location.href),
+    nextUrl: findAdjacentChapterLink(document, /다음화|다음\s*화|next/i, location.href),
     pages: pages,
   });
 }

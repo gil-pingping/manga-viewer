@@ -70,6 +70,61 @@ try {
   assert.deepEqual(result.pages, []);
   await page.unroute('https://newtoki1.org/**');
 
+  /**
+   * 실측 사이트(wftoon227.com)의 이전/다음 화 내비게이션.
+   *
+   * 주입 수집기가 여기서 링크를 놓치면 앱이 주소의 숫자를 ±1 해 다음 화를
+   * 추측하는데, 그 추측이 `num`(회차)이 아니라 `toon`(작품 id)을 올려
+   * "다음 화"가 다른 작품으로 튀었다 (실사고: ?toon=185&num=42 = 호박장군 41화).
+   *
+   * setContent 로 띄우면 주소가 about:blank 라 상대 href 가 풀리지 않는다.
+   * 사이트가 쓰는 상대 주소를 그대로 확인하려고 진짜 회차 주소로 띄운다.
+   */
+  const chapterUrl = 'https://wftoon227.com/view?toon=184&num=42';
+  let nav = '';
+  await page.route('https://wftoon227.com/**', (route) => route.fulfill({
+    contentType: 'text/html',
+    body: `<title>헬퍼 2 : 킬베로스 42화</title>
+      <div class="reading-content"><img data-src="https://cdn.test/comic/p1.png"></div>${nav}`,
+  }));
+  const collectNav = async (html) => {
+    nav = html;
+    await page.goto(chapterUrl);
+    return collect();
+  };
+
+  result = await collectNav(`<ul class="pagination">
+    <li class="prev"><a href="/view?toon=184&num=41">이전화</a></li>
+    <li class="next"><a href="/view?toon=184&num=43">다음화</a></li></ul>`);
+  assert.equal(result.prevUrl, 'https://wftoon227.com/view?toon=184&num=41',
+    '아래쪽 바의 이전화 링크를 놓치면 앱이 주소 숫자를 추측해 이전 화로 이동한다');
+  assert.equal(result.nextUrl, 'https://wftoon227.com/view?toon=184&num=43',
+    '다음화 링크를 놓치면 앱이 주소를 추측하다 toon(작품 id)을 올려 다른 작품을 연다');
+
+  result = await collectNav(`
+    <div class="prepage" onclick="location.href='/view?toon=184&num=41'"><a href="/view?toon=184&num=41" title="이전화"><i class="fa fa-chevron-left"></i></a></div>
+    <div class="nextpage" onclick="location.href='/view?toon=184&num=43'"><a href="/view?toon=184&num=43" title="다음화"><i class="fa fa-chevron-right"></i></a></div>`);
+  assert.equal(result.prevUrl, 'https://wftoon227.com/view?toon=184&num=41',
+    '옆 화살표는 본문이 아이콘뿐이라 title 을 안 보면 놓친다 — 이전 이동이 추측 주소로 떨어진다');
+  assert.equal(result.nextUrl, 'https://wftoon227.com/view?toon=184&num=43',
+    '옆 화살표만 있는 회차에서 title 을 놓치면 추측 주소로 다른 작품(호박장군)이 열린다');
+
+  result = await collectNav(`<ul class="pagination">
+    <li class="prev"><a href="javascript:alert('이전화가없습니다.');">이전화</a></li>
+    <li class="next"><a href="/view?toon=184&num=2">다음화</a></li></ul>`);
+  assert.equal(result.prevUrl, null,
+    '경계에서 사이트는 404 대신 javascript:alert 를 준다 — 회차 주소로 돌려주면 1화의 이전 이동이 깨진다');
+  assert.equal(result.nextUrl, 'https://wftoon227.com/view?toon=184&num=2',
+    '한쪽이 경계라도 반대 방향 링크는 그대로 찾아야 한다');
+
+  result = await collectNav(`<div class="preview"><a href="/preview?toon=184">미리보기</a></div>
+    <div class="nextpage"><a href="/view?toon=184&num=43" title="다음화"><i class="fa fa-chevron-right"></i></a></div>`);
+  assert.equal(result.prevUrl, null,
+    'preview·preload 를 prev 로 부분 일치하면 미리보기 페이지가 이전 화로 열린다');
+  assert.equal(result.nextUrl, 'https://wftoon227.com/view?toon=184&num=43',
+    '이전 화가 없어도 다음 화 화살표는 찾아야 한다');
+  await page.unroute('https://wftoon227.com/**');
+
   if (process.env.MV_COLLECTOR_LIVE === '1') {
     await page.goto('https://newtoki1.org/webtoon/599/214627', { waitUntil: 'domcontentloaded' });
     const deadline = Date.now() + 20_000;
@@ -184,4 +239,4 @@ try {
   if (previousParser === undefined) delete globalThis.DOMParser;
   else globalThis.DOMParser = previousParser;
 }
-console.log('본문 지연·부분 로딩·배너 제외 및 구형 APK 자동 재시도 회귀 통과');
+console.log('본문 지연·부분 로딩·배너 제외, 이전/다음 화 링크 및 구형 APK 자동 재시도 회귀 통과');

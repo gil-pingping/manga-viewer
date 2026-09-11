@@ -15,6 +15,7 @@ import {
   hasAdjacent as canGoAdjacent,
   resolveAdjacent,
   findAdjacentPrefetch,
+  isSameSeries,
   upsertChapter,
 } from './src/core/chapterNav.js';
 import { groupChaptersBySeries, parseSeriesAndEpisode } from './src/core/series.js';
@@ -427,7 +428,7 @@ function prefetchNextChapter(chapter) {
 
   const promise = UrlHarvester.fetchFromUrl(chapter.nextUrl, { silentRenderedFallback: true })
     .then((harvested) => harvested?.pages?.length
-      ? storeHarvestedChapter(harvested, 'prefetch')
+      ? storeHarvestedChapter(harvested, 'prefetch', chapter)
       : null)
     .catch((err) => {
       console.debug('[다음 화 미리 받기] 클릭할 때 다시 시도합니다.', err.message);
@@ -533,8 +534,28 @@ async function reloadCurrentChapter({ silent = false } = {}) {
 /**
  * 새로 수집한 챕터를 목록 맨 앞에 넣고 바로 연다.
  * 같은 출처를 다시 불러오면 새로 만들지 않고 갱신한다.
+ *
+ * `from` 은 "이 화에서 인접 이동으로 왔다" 는 뜻이다. 인접 이동 경로
+ * (다음/이전 화 버튼·미리 받기·정주행)만 넘기고, 주소 붙여넣기나 회차 목록
+ * 클릭은 넘기지 않는다 — 그쪽은 다른 작품을 여는 게 정상이다.
  */
-async function storeHarvestedChapter(harvested, idPrefix) {
+async function storeHarvestedChapter(harvested, idPrefix, from = null) {
+  /**
+   * 인접 화 주소가 다른 작품으로 이어지면 열지도, 저장하지도 않는다.
+   * 실측: `?toon=184&num=42`(헬퍼 2 : 킬베로스 42화) 의 다음화 링크를 못 읽어
+   * 주소 추측으로 내려갔고, toon(작품 id)이 185 로 올라가 호박장군 41화가
+   * "다음 화"로 열렸다. 조용히 다른 작품을 보여주는 게 최악이다.
+   */
+  if (from && !isSameSeries(harvested?.title, from.title)) {
+    const other = parseSeriesAndEpisode(harvested?.title || '').seriesTitle;
+    const err = new Error(
+      `사이트가 준 인접 화 링크가 다른 작품("${other}")으로 이어집니다.\n`
+      + '회차 목록에서 골라 주세요.'
+    );
+    err.seriesJump = true; // 정주행은 이 실패만 사용자에게 알린다
+    throw err;
+  }
+
   const { chapters, chapter } = upsertChapter(
     state.chapters,
     harvested,
@@ -547,13 +568,11 @@ async function storeHarvestedChapter(harvested, idPrefix) {
   return chapter;
 }
 
-async function addChapter(harvested, idPrefix) {
-  const chapter = await storeHarvestedChapter(harvested, idPrefix);
+async function addChapter(harvested, idPrefix, from = null) {
+  const chapter = await storeHarvestedChapter(harvested, idPrefix, from);
 
-  // 새로 불러온 콘텐츠는 항상 auto 로 본다. 앞 챕터에서 고른 모드를 물려받으면
-  // 웹툰이 페이지 넘김으로 뜨는 식으로 깨진다.
-  resetModeToAuto();
-
+  // 보기 모드는 건드리지 않는다. 한 번 고른 모드는 다시 바꾸기 전까지 유지된다
+  // (고른 적 없으면 기본값 auto 라 화마다 자동 판정을 받는다).
   await openChapter(chapter.id, 1);
   return chapter;
 }
@@ -658,7 +677,7 @@ function ensureBingeAhead() {
         });
         if (!harvested?.pages?.length) return null;
         if (!bingeEnabled || generation !== bingeGeneration || tailId !== bingeTailId) return null;
-        next = await storeHarvestedChapter(harvested, 'binge');
+        next = await storeHarvestedChapter(harvested, 'binge', tail);
       }
     }
 
@@ -706,6 +725,8 @@ function ensureBingeAhead() {
     prefetchNextChapter(next);
     return next;
   })().catch((err) => {
+    // 작품이 바뀌는 링크는 조용히 넘기면 정주행이 이유 없이 멈춘 것으로 보인다
+    if (err.seriesJump) toast(err.message, { error: true, duration: 12000 });
     console.debug('[정주행] 다음 화는 경계에서 다시 시도합니다.', err.message);
     return null;
   });
@@ -742,7 +763,6 @@ async function goChapter(delta) {
     }
 
     if (move.kind === 'open') {
-      resetModeToAuto();
       // 다음/이전 화 버튼은 1쪽부터. 예전에 훑은 화의 저장 위치로 열리면 "다음 화가 중간부터 시작" 으로 보였다
       await openChapter(move.chapter.id, 1);
       return;
@@ -754,14 +774,14 @@ async function goChapter(delta) {
     const prepared = findAdjacentPrefetch(nextChapterPrefetch, state.currentId, delta, move.url);
     const prefetched = prepared ? await prepared : null;
     if (prefetched) {
-      resetModeToAuto();
       await openChapter(prefetched.id, 1);
       toast(`${prefetched.pages.length}장 불러왔습니다.`);
       return;
     }
 
+    const from = currentChapter();
     const harvested = await UrlHarvester.fetchFromUrl(move.url);
-    await addChapter(harvested, 'import');
+    await addChapter(harvested, 'import', from);
     toast(`${harvested.pages.length}장 불러왔습니다.`);
   } catch (err) {
     toast(err.message + formatDiagnosis(err.diagnosis), { error: true, duration: 20000 });
@@ -834,6 +854,11 @@ async function batchSave(count) {
 
       setBusy(true, `${done + 1}/${count}화 불러오는 중…`);
       const harvested = await UrlHarvester.fetchFromUrl(chapter.nextUrl);
+      // 다음 화 주소가 다른 작품으로 튀면(실측: toon +1) 남의 작품을 서재에 담게 된다
+      if (!isSameSeries(harvested?.title, chapter.title)) {
+        stopReason = '다음 화 링크가 다른 작품으로 이어져 여기서 멈췄습니다. 회차 목록에서 담아 주세요.';
+        break;
+      }
       const next = upsertChapter(state.chapters, harvested, `import-${Date.now()}-${n}`);
       state.chapters = next.chapters;
       chapter = next.chapter;
@@ -1582,14 +1607,6 @@ function markSegmented(group, attr, value) {
   group.querySelectorAll('button').forEach((b) => {
     b.classList.toggle('is-active', b.dataset[attr] === value);
   });
-}
-
-/** 보기 모드를 auto 로 되돌리고 세그먼트 표시도 맞춘다 */
-function resetModeToAuto() {
-  if (state.settings.mode === 'auto') return;
-  state.settings.mode = 'auto';
-  markSegmented(el.modeGroup, 'mode', 'auto');
-  if (engine) engine.setMode('auto');
 }
 
 function applyPaper(paper) {

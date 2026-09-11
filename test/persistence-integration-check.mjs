@@ -83,7 +83,7 @@ try {
   await page.evaluate(async () => {
     const image = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>';
     localStorage.setItem('mangaViewer.settings', JSON.stringify({
-      direction: 'LTR', transition: 'fade', speed: 9, brightness: 88, paper: 'warm',
+      mode: 'strip', direction: 'LTR', transition: 'fade', speed: 9, brightness: 88, paper: 'warm',
     }));
     localStorage.setItem('mangaViewer.progress', JSON.stringify({ 'legacy-1000': 1 }));
     localStorage.setItem('mangaViewer.lastChapterId', 'legacy-1000');
@@ -163,6 +163,8 @@ try {
   assert.equal(migrated.kv['migration.v1'], 'complete');
   assert.equal(migrated.kv.lastChapterId, 'legacy-1000');
   assert.equal(migrated.kv.settings.direction, 'LTR');
+  // 보기 모드도 남는다. 예전엔 저장에서 mode 만 빼서 화를 넘길 때마다 auto 로 풀렸다
+  assert.equal(migrated.kv.settings.mode, 'strip', '한 번 고른 보기 모드는 다시 바꿀 때까지 유지된다');
   assert.deepEqual(await legacyCounts(page), { chapters: 1001, recent: 31 }, 'legacy 원본 유지');
   assert.deepEqual(await page.evaluate(() => window.__idbClearCalls), [], '부팅 중 store.clear 금지');
 

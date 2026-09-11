@@ -1,3 +1,5 @@
+import { parseSeriesAndEpisode } from './series.js';
+
 /**
  * 챕터 목록 탐색 — 순수 함수.
  *
@@ -13,6 +15,26 @@
  *  - isDemo 챕터는 사용자가 명시적으로 고를 때만 열려야 한다
  *  - prevUrl/nextUrl 은 사이트에서 파싱한 인접 화 주소
  */
+
+/**
+ * 두 제목이 같은 작품인가. 인접 화 이동이 작품을 넘어갔는지 판정하는 규칙.
+ *
+ * 왜 있나 (실측): wftoon227.com 은 `/view?toon=<작품>&num=<회차>` 구조인데
+ * 다음화 링크를 못 읽으면 호출자가 주소의 숫자를 +1 로 추측한다. 그때
+ * `?toon=184&num=42`(헬퍼 2 : 킬베로스 42화) 의 toon 이 185 로 올라가
+ * "다음 화"가 전혀 다른 작품(호박장군 41화)으로 조용히 열렸다.
+ *
+ * 판별 불가는 통과시킨다: 회차 번호를 못 찾은 제목은 parseSeriesAndEpisode 가
+ * 제목 전체를 시리즈명으로 내놓기 때문에 회차마다 값이 달라진다 — 그걸로
+ * 막으면 번호 표기가 없는 사이트에서 정상 이동까지 죽는다. 막는 건
+ * "양쪽 다 회차 번호가 읽히는데 작품명이 다르다" 는 확실한 경우뿐이다.
+ */
+export function isSameSeries(titleA, titleB) {
+  const a = parseSeriesAndEpisode(titleA || '');
+  const b = parseSeriesAndEpisode(titleB || '');
+  if (!(a.episodeNum > 0) || !(b.episodeNum > 0)) return true;
+  return a.seriesTitle === b.seriesTitle;
+}
 
 /** id 로 챕터 찾기. 없으면 첫 챕터 (목록이 비면 null) */
 export function findChapter(chapters, id) {

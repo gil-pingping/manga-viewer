@@ -209,6 +209,34 @@ async function handleProxyImage(request) {
   });
 }
 
+/**
+ * 업스트림이 선언한 charset 으로 HTML 을 읽는다.
+ *
+ * `Response.text()` 는 선언된 charset 과 무관하게 항상 UTF-8 로 디코딩한다(Fetch 표준).
+ * 그래서 CP949 사이트(실측 wftoon227.com — 본문이 `iconv -f CP949` 로만 풀린다)의 제목·링크
+ * 글자가 여기서 U+FFFD 로 죽었다. 죽은 글자로는 수집기가 `다음화`/`이전화` 를 못 찾아
+ * 쿼리 증가 추측으로 떨어지고, 작품 id 가 올라가 "다음 화" 가 다른 만화로 갔다.
+ * Worker 는 웹 경로이면서 네이티브의 중계 경로라 두 길 모두 이 버그를 지나갔다.
+ *
+ * ponytail: `src/platform/nativeHttp.js` 의 `pickCharset` 과 같은 규칙을 여기 한 번 더 둔다 —
+ * 그 파일은 `@capacitor/core` 를 import 해서 Worker 번들에 넣을 수 없다.
+ * 규칙이 셋 이상으로 늘면 `src/shared/proxyRules.js` 로 옮길 것.
+ */
+const CP949_ALIASES = /^(euc-kr|euckr|ks_c_5601-1987|ks_c_5601|ksc5601|ksc_5601|cp949|(x-)?windows-949)$/;
+
+function decodeUpstreamHtml(bytes, contentType) {
+  const fromHeader = /charset\s*=\s*["']?\s*([\w:.+-]+)/i.exec(contentType || '')?.[1];
+  // 헤더에 없으면 앞 2KB 의 meta 를 latin1(throw 없는 단일바이트)로 스니핑한다
+  const head = fromHeader ? '' : new TextDecoder('latin1').decode(bytes.slice(0, 2048));
+  const declared = fromHeader || /<meta[^>]+charset\s*=\s*["']?\s*([\w:.+-]+)/i.exec(head)?.[1];
+  const label = (declared || 'utf-8').trim().toLowerCase();
+  try {
+    return new TextDecoder(CP949_ALIASES.test(label) ? 'euc-kr' : label).decode(bytes);
+  } catch {
+    return new TextDecoder('utf-8').decode(bytes); // 모르는 라벨이면 UTF-8 (생성자만 던진다)
+  }
+}
+
 async function handleFetchPage(request) {
   const url = new URL(request.url);
   const target = url.searchParams.get('url');
@@ -237,7 +265,12 @@ async function handleFetchPage(request) {
    * text/plain 으로 돌려준다. 클라이언트는 DOMParser 로 파싱하므로 문제없고,
    * 이 주소를 직접 열었을 때 원격 HTML 이 우리 오리진 문서로 실행되지 않는다.
    */
-  return new Response(await upstream.text(), {
+  const html = decodeUpstreamHtml(
+    new Uint8Array(await upstream.arrayBuffer()),
+    upstream.headers.get('Content-Type')
+  );
+
+  return new Response(html, {
     status: 200,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',

@@ -72,10 +72,17 @@ export const defaultSettings = {
   paper: 'none',
 };
 
+/**
+ * 보기 모드도 함께 남긴다.
+ *
+ * 예전엔 mode 만 일부러 버렸다 — 앞 화에서 고른 모드가 다음 화로 물려 내려가
+ * 웹툰이 페이지 넘김으로 뜨는 걸 막으려던 것이다. 그런데 쓰는 쪽에서는 "화를
+ * 넘길 때마다 보기 모드가 제멋대로 풀린다"로 보인다. 기본값이 auto 라 고른 적
+ * 없는 사람은 그대로 자동 판정을 받고, 직접 고른 사람만 그 선택을 유지한다.
+ */
 export function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    delete saved.mode;
     return { ...defaultSettings, ...saved };
   } catch {
     return { ...defaultSettings };
@@ -83,7 +90,7 @@ export function loadSettings() {
 }
 
 export function saveSettings(settings) {
-  const { mode, ...persisted } = settings;
+  const persisted = { ...settings };
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(persisted));
   } catch {
@@ -252,11 +259,11 @@ export async function restoreStateFromKv(state) {
     state.settings = { ...defaultSettings, ...kvSettings };
     setLocalValue(SETTINGS_KEY, JSON.stringify(kvSettings));
   } else if (localSettings) {
-    delete localSettings.mode;
+    // mode 도 그대로 복구한다 — 예전엔 여기서 지워서 앱을 켤 때마다 auto 로 풀렸다
     state.settings = { ...defaultSettings, ...localSettings };
     await putKv('settings', localSettings);
   } else {
-    const { mode, ...settings } = state.settings;
+    const settings = { ...state.settings };
     setLocalValue(SETTINGS_KEY, JSON.stringify(settings));
     await putKv('settings', settings);
   }
