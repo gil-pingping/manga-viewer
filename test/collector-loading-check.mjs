@@ -71,6 +71,29 @@ try {
   await page.unroute('https://newtoki1.org/**');
 
   /**
+   * 장식용 title 슬러그가 CP949 로 인코딩된 사이트. searchParams 는 그 값을 UTF-8 로
+   * 읽어 양쪽이 서로 다른 치환문자가 되므로, 값 비교로는 같은 페이지가 다르게 보인다.
+   * 실측: 맞는 회차가 눈앞에 떠 있는데 COLLECTOR_WRONG_PAGE 로 거절됐다.
+   */
+  await page.route('https://wftoon227.com/**', (route) => route.fulfill({
+    contentType: 'text/html',
+    body: '<div class="reading-content"><img data-src="https://cdn.test/comic/w1.png"><img data-src="https://cdn.test/comic/w2.png"><img data-src="https://cdn.test/comic/w3.png"></div>',
+  }));
+  await page.goto('https://wftoon227.com/view?toon=184&num=42&title=%C7%EF%C6%DB2%C5%B3%BA%A3%B7%CE%BD%BA42%C8%AD');
+  result = JSON.parse(await page.evaluate(buildNativeCollectorScript(
+    'https://wftoon227.com/view?toon=184&num=42&title=%EF%BF%BD%EF%BF%BD2%C5%B3%EF%BF%BD42%C8%AD'
+  )));
+  assert.equal(result.collectorError, undefined, 'CP949 title 슬러그가 달라 보여도 같은 회차다');
+  assert.equal(result.pages.length, 3);
+
+  // 회차를 가리키는 값이 실제로 다르면 여전히 막는다
+  result = JSON.parse(await page.evaluate(buildNativeCollectorScript(
+    'https://wftoon227.com/view?toon=184&num=43&title=%C7%EF%C6%DB2%C5%B3%BA%A3%B7%CE%BD%BA43%C8%AD'
+  )));
+  assert.match(result.collectorError || '', /COLLECTOR_WRONG_PAGE/, 'num 이 다르면 다른 회차다');
+  await page.unroute('https://wftoon227.com/**');
+
+  /**
    * 실측 사이트(wftoon227.com)의 이전/다음 화 내비게이션.
    *
    * 주입 수집기가 여기서 링크를 놓치면 앱이 주소의 숫자를 ±1 해 다음 화를

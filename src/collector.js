@@ -260,11 +260,19 @@ function collectForNative(targetUrl) {
     var expected = new URL(targetUrl);
     var current = new URL(location.href);
     // 팝업·광고 리다이렉트의 이미지를 원래 회차 이름으로 저장하지 않는다.
+    //
+    // 값이 ASCII 가 아닌 파라미터는 비교하지 않는다. 회차를 가리키는 값(toon·num·no
+    // 따위)은 전부 숫자라 그대로 비교되고, 걸러지는 건 사이트가 붙이는 장식용
+    // title 슬러그 같은 것뿐이다. 그런 값이 CP949 로 퍼센트 인코딩돼 있으면
+    // searchParams 가 UTF-8 로 읽어 양쪽이 서로 다른 치환문자 뭉치가 된다 — 실측:
+    // 맞는 회차 페이지가 눈앞에 떠 있는데도 COLLECTOR_WRONG_PAGE 로 거절됐다.
+    var mismatched = Array.from(expected.searchParams).some(function (entry) {
+      if (/[^\x20-\x7E]/.test(entry[1])) return false;
+      return current.searchParams.get(entry[0]) !== entry[1];
+    });
     if (current.hostname !== expected.hostname ||
         current.pathname.replace(/\/$/, '') !== expected.pathname.replace(/\/$/, '') ||
-        Array.from(expected.searchParams).some(function (entry) {
-          return current.searchParams.get(entry[0]) !== entry[1];
-        })) {
+        mismatched) {
       throw new Error('COLLECTOR_WRONG_PAGE');
     }
     // 뉴토끼 회차는 본문 표식이 필수다. 아예 없는 응답도 광고로 대신 채우지 않는다.
