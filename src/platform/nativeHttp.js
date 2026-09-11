@@ -362,14 +362,38 @@ export async function fetchPageImage(page, { signal } = {}) {
   throw directError || new Error('이미지를 가져오지 못했습니다.');
 }
 
+/**
+ * 이 컷을 어디서 받을지 고른다. 순수 함수 — 규칙을 테스트로 고정한다.
+ *
+ *   { kind: 'stored', url }  이미 손에 있는 주소를 그대로 쓴다 (서재 blob, 로컬 파일, 웹 경로)
+ *   { kind: 'fetch',  url }  네이티브가 원본 호스트에서 바이트를 받아야 한다
+ */
+export function pickImageSource(page, { native }) {
+  const stored = page?.url || '';
+
+  /**
+   * 호출자가 서재에서 꺼낸 blob 을 이미 끼워 넣었으면 그게 답이다.
+   *
+   * 여기서 originalUrl 을 보고 네트워크로 나가면(예전 동작) 담아둔 바이트를 버리고
+   * 서명이 만료된 원본을 다시 받으려 한다. 앱을 껐다 켜면 WebView 캐시도 비어 있어
+   * 담아둔 화 전체가 "이미지 실패 · 다시 시도" 로 떴다 — 서재가 아예 안 쓰였다.
+   */
+  if (/^(blob:|data:)/i.test(stored)) return { kind: 'stored', url: stored };
+
+  const rawUrl = page?.originalUrl || stored;
+  const isDirectHttp = !!rawUrl && /^https?:\/\//i.test(rawUrl) && !rawUrl.includes('/api/proxy-image');
+
+  if (!native || !isDirectHttp || /^(blob:|data:)/i.test(rawUrl)) {
+    return { kind: 'stored', url: stored || rawUrl };
+  }
+  return { kind: 'fetch', url: rawUrl };
+}
+
 /** ReaderEngine이 만든 URL만 ReaderEngine이 revoke한다. */
 export async function resolvePageImageUrl(page) {
-  const rawUrl = page?.originalUrl || page?.url;
-  const isDirectHttp = rawUrl && /^https?:\/\//i.test(rawUrl) && !rawUrl.includes('/api/proxy-image');
+  const source = pickImageSource(page, { native: isNativeApp() });
+  if (source.kind === 'stored') return { url: source.url, owned: false };
 
-  if (!isNativeApp() || !isDirectHttp || /^(blob:|data:)/.test(rawUrl || '')) {
-    return { url: page?.url || rawUrl, owned: false };
-  }
   const response = await fetchPageImage(page);
   if (!response.ok || !response.blob) {
     throw new Error(`원본 이미지 서버가 요청을 거부했습니다 (${response.status}).`);

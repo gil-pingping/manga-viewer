@@ -51,6 +51,7 @@ export class ReaderEngine {
     this.onPageChange = options.onPageChange || (() => {});
     this.onEpisodeEnd = options.onEpisodeEnd || (() => {});
     this.onZoomChange = options.onZoomChange || (() => {});
+    this.onImageFailure = options.onImageFailure || (() => {});
     this.resolvePageUrl = options.resolvePageUrl || ((page) => ({ url: page.url, owned: false }));
 
     this.handleResize = debounce(() => this.onViewportResize(), 150);
@@ -252,7 +253,7 @@ export class ReaderEngine {
         }, 700 * (retries + 1));
         return;
       }
-      this.markImageFailed(img);
+      this.markImageFailed(img, page);
     });
 
     this.imageCache.set(page.url, img);
@@ -283,19 +284,23 @@ export class ReaderEngine {
         }
 
         img.__ownedObjectUrl = value.owned ? value.url : null;
-        img.src = reload && !value.owned ? bust(value.url) : value.url;
+        // blob:·data: 에 캐시 우회 쿼리를 붙이면 주소 자체가 깨진다 (서재에서 꺼낸 컷)
+        const cacheable = !value.owned && !/^(blob:|data:)/i.test(value.url);
+        img.src = reload && cacheable ? bust(value.url) : value.url;
       })
       .catch((err) => {
         if (img.__loadToken !== loadToken) return;
         console.warn(`[이미지 ${index + 1}]`, err);
-        this.markImageFailed(img);
+        this.markImageFailed(img, page);
       });
   }
 
-  markImageFailed(img) {
+  markImageFailed(img, page) {
     img.classList.remove('is-loading');
     img.classList.add('is-error');
     img.closest('.manga-page-wrapper, .manga-strip-page')?.classList.add('load-failed');
+    // 재시도까지 다 쓴 진짜 실패다. 어느 화의 컷인지 알려주면 바깥에서 복구할 수 있다
+    this.onImageFailure(page?.chapterId ?? null);
   }
 
   releaseOwnedUrl(img) {

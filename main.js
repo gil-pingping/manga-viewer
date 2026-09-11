@@ -476,6 +476,28 @@ async function loadEpisodeUrl(url) {
  * 만료된 화는 컷이 군데군데 안 뜨는데, 저장된 주소로는 복구가 안 된다 —
  * 원본 페이지에서 새 서명 주소를 받아와야 한다. 읽던 페이지는 유지한다.
  */
+/**
+ * 컷이 계속 실패하면 스스로 원본에서 다시 수집한다.
+ *
+ * 왜 필요한가: 컷 주소에는 서명이 붙어 시간이 지나면 만료된다. 앱을 껐다 켜면
+ * WebView 캐시도 비어 있어 담아두지 않은 화는 전부 "이미지 실패 · 다시 시도" 로 뜬다.
+ * 그 버튼은 같은 만료 주소를 다시 요청하므로 눌러도 안 된다 — 새 서명을 받아야 한다.
+ *
+ * 서재에 담아둔 화는 이 길로 오지 않는다 (바이트가 기기에 있어 실패하지 않는다).
+ */
+const imageFailures = new Map();
+const autoReloaded = new Set();
+const IMAGE_FAILURES_BEFORE_RELOAD = 3;
+
+function autoReloadChapter(chapterId) {
+  if (autoReloaded.has(chapterId) || chapterNavigationBusy) return;
+  const chapter = state.chapters.find((c) => c.id === chapterId);
+  if (!chapter?.sourceUrl) return; // 로컬 파일·데모는 되받을 원본이 없다
+  autoReloaded.add(chapterId); // 한 화에 한 번만 — 실패가 네트워크 탓이면 반복해도 같다
+  toast('컷 주소가 만료된 것 같습니다. 원본에서 다시 받아옵니다…');
+  reloadCurrentChapter().catch((err) => console.warn('[자동 재수집] 실패', err));
+}
+
 async function reloadCurrentChapter() {
   const chapter = state.chapters.find((c) => c.id === state.currentId);
   if (!chapter) {
@@ -867,6 +889,13 @@ function initEngine() {
 
     onZoomChange: (zoomed) => {
       el.btnZoomReset.classList.toggle('is-hidden', !zoomed);
+    },
+
+    onImageFailure: (chapterId) => {
+      if (!chapterId || chapterId !== state.currentId) return;
+      const failures = (imageFailures.get(chapterId) || 0) + 1;
+      imageFailures.set(chapterId, failures);
+      if (failures >= IMAGE_FAILURES_BEFORE_RELOAD) autoReloadChapter(chapterId);
     },
 
     onEpisodeEnd: () => {
