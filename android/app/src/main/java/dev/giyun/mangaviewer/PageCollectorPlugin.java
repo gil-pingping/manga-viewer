@@ -171,7 +171,7 @@ public class PageCollectorPlugin extends Plugin {
         cover.addView(statusView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button showButton = new Button(getContext());
-        showButton.setText("로그인 · 페이지 보기");
+        showButton.setText("페이지 보기 (광고 검증 · 로그인)");
         showButton.setOnClickListener((View ignored) -> collectorCover.setVisibility(View.GONE));
         LinearLayout.LayoutParams showParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(52));
         showParams.topMargin = dp(20);
@@ -345,7 +345,9 @@ public class PageCollectorPlugin extends Plugin {
                             finishError("이미지를 찾지 못했습니다.");
                             return;
                         }
-                        setStatus("이미지 없음 · 로그인 후 ‘가져오기’를 누르세요");
+                        // 사이트가 컷 자리에 광고 검증·로그인 관문을 세우면 여기로 온다.
+                        // 관문은 사람이 통과해야 한다 — 페이지를 보여주고 그 뒤 다시 수집한다.
+                        setStatus("컷이 없습니다 · ‘페이지 보기’로 광고 검증·로그인을 넘긴 뒤 ‘가져오기’");
                         return;
                     }
                     finishSuccess(result);

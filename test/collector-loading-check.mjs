@@ -137,7 +137,16 @@ await assert.rejects(collectRenderedPage(url), /다른 페이지/);
 assert.equal(calls.length, 3);
 mode = 'empty'; calls = [];
 await assert.rejects(collectRenderedPage(url), /이미지를 찾지 못했습니다/);
-assert.equal(calls.length, 3, '재시도는 제한되어야 한다');
+// 무음 재시도는 3회로 제한하고, 그 뒤 한 번만 사람에게 보여준다.
+// 컷 자리에 "광고 검증 후 다시 시도해주세요" 관문이 선 경우 무음으로는 영원히 빈 결과다.
+assert.deepEqual(
+  calls.map((call) => call.silent),
+  [true, true, true, false],
+  '무음으로 못 찾으면 보이는 수집 화면을 한 번 띄운다'
+);
+calls = [];
+await assert.rejects(collectRenderedPage(url, { silent: true }), /이미지를 찾지 못했습니다/);
+assert.equal(calls.length, 3, '사전 수집·자동 재수집은 관문 화면을 띄우지 않는다');
 mode = 'auth'; calls = [];
 await collectRenderedPage(url);
 assert.deepEqual(calls.map((call) => call.silent), [true, false]);

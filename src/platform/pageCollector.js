@@ -53,8 +53,15 @@ async function collectOnce(targetUrl, { silent, collect }) {
         throw new Error('수집기가 앞 페이지에 걸려 있습니다. 앱을 완전히 닫고 다시 열어 주세요 (APK 업데이트가 이 문제를 없앱니다).');
       }
       const needsInteraction = /사이트 응답 (401|403|429)|페이지를 열지 못했습니다/.test(error?.message || '');
-      if (empty || silent || !needsInteraction) throw error;
-      // 로그인·인증이 필요한 경우에만 기존 수동 화면으로 넘긴다.
+      /**
+       * 컷을 하나도 못 찾은 경우도 사람에게 넘긴다.
+       *
+       * 사이트가 컷 자리에 "광고 검증 후 다시 시도해주세요" 같은 관문을 세우면 무음
+       * 수집기로는 영원히 빈 결과다. 그 관문은 사람이 통과해야 하는 것이므로 보이는
+       * 수집 화면을 띄워 직접 넘기게 한다 — 관문을 뚫는 게 아니라 보여준다.
+       * 무음 호출(미리 받기·정주행·자동 재수집)은 사용자가 부른 것이 아니므로 띄우지 않는다.
+       */
+      if (silent || !(needsInteraction || empty)) throw error;
       return collect({ ...options, silent: false });
     }
   }

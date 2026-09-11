@@ -495,10 +495,11 @@ function autoReloadChapter(chapterId) {
   if (!chapter?.sourceUrl) return; // 로컬 파일·데모는 되받을 원본이 없다
   autoReloaded.add(chapterId); // 한 화에 한 번만 — 실패가 네트워크 탓이면 반복해도 같다
   toast('컷 주소가 만료된 것 같습니다. 원본에서 다시 받아옵니다…');
-  reloadCurrentChapter().catch((err) => console.warn('[자동 재수집] 실패', err));
+  // 사용자가 부른 게 아니므로 무음으로 — 관문을 만나도 수집 화면이 갑자기 덮으면 안 된다
+  reloadCurrentChapter({ silent: true }).catch((err) => console.warn('[자동 재수집] 실패', err));
 }
 
-async function reloadCurrentChapter() {
+async function reloadCurrentChapter({ silent = false } = {}) {
   const chapter = state.chapters.find((c) => c.id === state.currentId);
   if (!chapter) {
     toast('열려 있는 화가 없습니다.', { error: true });
@@ -512,7 +513,9 @@ async function reloadCurrentChapter() {
   const keepPage = engine?.getPageInfo()?.currentPageNum ?? 1;
   try {
     setBusy(true, '이 화를 다시 수집하는 중…');
-    const harvested = await UrlHarvester.fetchFromUrl(chapter.sourceUrl);
+    const harvested = await UrlHarvester.fetchFromUrl(chapter.sourceUrl, {
+      silentRenderedFallback: silent,
+    });
     const { chapters, chapter: updated } = upsertChapter(state.chapters, harvested, `reload-${Date.now()}`);
     state.chapters = chapters;
     rememberEpisodeLinks(harvested, updated);
