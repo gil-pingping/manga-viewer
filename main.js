@@ -586,13 +586,15 @@ function updateBingeButton() {
     .setAttribute('href', bingeEnabled ? '#i-pause' : '#i-play');
 }
 
+/**
+ * 정주행은 어느 보기 모드에서나 켤 수 있다.
+ *
+ * 이어지는 방식만 모드에 따라 다르다. 세로 스크롤은 다음 화를 아래에 붙여 끊김 없이
+ * 잇고, 페이지 넘김은 붙일 자리가 없으니 마지막 장에서 바로 다음 화를 연다.
+ * 예전엔 세로 스크롤에서만 켜졌고 모드를 바꾸면 저 혼자 꺼졌다.
+ */
 async function toggleBingeMode() {
   if (!bingeEnabled) {
-    if (!el.viewport.classList.contains('mode-strip')) {
-      toast('정주행은 세로 스크롤 웹툰에서만 쓸 수 있습니다.');
-      return;
-    }
-
     const info = engine?.getPageInfo();
     if (!info?.chapterId) return;
 
@@ -652,6 +654,12 @@ async function canLoadFirstPage(chapter) {
   }
 }
 
+/**
+ * 다음 화를 미리 받아 지금 화 아래에 붙인다 — 세로 스크롤 전용이다.
+ *
+ * 페이지 넘김에는 붙일 자리가 없다. 그 모드의 정주행은 마지막 장에서 다음 화를 여는
+ * 것으로 이어지고(onEpisodeEnd), 다음 화는 openChapter 가 이미 미리 받아둔다.
+ */
 function ensureBingeAhead() {
   if (
     !bingeEnabled
@@ -929,8 +937,14 @@ function initEngine() {
     onEpisodeEnd: () => {
       if (bingeEnabled) {
         const move = resolveAdjacent(state.chapters, bingeTailId, 1);
-        if (move.kind === 'none') toast('마지막 화입니다.');
-        else ensureBingeAhead();
+        if (move.kind === 'none') {
+          toast('마지막 화입니다.');
+          return;
+        }
+        // 세로 스크롤은 아래에 붙여 잇는다. 페이지 넘김은 붙일 자리가 없으니 바로
+        // 다음 화를 연다 — 안내 문구 없이 넘어가는 게 정주행이다.
+        if (el.viewport.classList.contains('mode-strip')) ensureBingeAhead();
+        else goChapter(1);
         return;
       }
 
@@ -2048,14 +2062,9 @@ function wireEvents() {
     state.settings.mode = mode;
     saveSettings();
     engine.setMode(mode);
-    if (bingeEnabled && !el.viewport.classList.contains('mode-strip')) {
-      bingeEnabled = false;
-      bingeGeneration++;
-      bingePromise = null;
-      bingeTailId = null;
-      updateBingeButton();
-      toast('정주행은 세로 스크롤에서만 유지됩니다.');
-    }
+    // 보기 모드를 바꿔도 정주행은 그대로 둔다. 이어지는 방식만 바뀐다
+    // (세로 스크롤은 아래에 붙이고, 페이지 넘김은 마지막 장에서 다음 화를 연다).
+    if (bingeEnabled) ensureBingeAhead();
   });
 
   wireSegmented(el.paperGroup, 'paper', (paper) => {
