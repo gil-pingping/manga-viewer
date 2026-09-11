@@ -91,20 +91,62 @@ export async function listChapters() {
 }
 
 /**
+ * 어떤 키로 바이트를 찾을지 고른다.
+ *
+ * 키는 `page.url` = `/api/proxy-image?url=<서명된 CDN 주소>&ref=...` 이고 **서명이
+ * 키 안에 들어 있다**. 그래서 같은 컷이라도 다시 수집하면 키가 달라진다.
+ * `upsertChapter` 가 재수집(수동 재수집·몰아보기 선반입·일괄 저장) 때마다
+ * `chapter.pages` 를 통째로 갈아치우므로, 메모리의 챕터는 새 서명을,
+ * 저장된 바이트는 옛 서명을 들고 있게 된다. 그 상태로 메모리 쪽 url 로 찾으면
+ * 전부 miss → 온라인 폴백 → 서명 만료 뒤엔 "이미지 실패 · 다시 시도".
+ * 바이트는 그 내내 기기에 있었다.
+ *
+ * 그래서 CHAPTERS 행이 기준이다 — saveChapter 가 바이트와 그 행을 같은 순간에
+ * 같은 키로 썼기 때문이다.
+ *
+ * 장수가 다르면 맞춰 자르거나 짝지어선 안 된다. 장수가 다른 것은 판본이 다른
+ * 것이고, 순번으로 바이트를 매핑하면 **엉뚱한 컷**을 보여준다. 그때는 저장 행을
+ * 버리고 메모리 쪽 url 을 쓴다 (이 변경 전에 저장된 행·행이 없는 챕터와 같은 취급).
+ *
+ * IndexedDB 없이 검사할 수 있도록 이 판단만 순수 함수로 떼어 둔다.
+ * 못 쓸 키가 하나라도 있으면 성공할 수 없는 조회를 하지 않고 null 을 준다.
+ */
+export function offlinePageKeys(chapterPages, storedPages) {
+  if (!Array.isArray(chapterPages) || chapterPages.length === 0) return null;
+
+  const stored = Array.isArray(storedPages) ? storedPages : [];
+  const source = stored.length === chapterPages.length ? stored : chapterPages;
+
+  const keys = source.map((p) => p?.url);
+  if (keys.some((k) => !k)) return null;
+  return keys;
+}
+
+/**
  * 챕터의 페이지 바이트를 꺼내 화면에 걸 수 있는 주소로 바꾼다.
  *
  * 한 장이라도 빠졌으면 부분 저장이므로 null 을 돌려 온라인 경로를 쓰게 한다.
  * (중간에 구멍 난 챕터를 열어 빈 컷을 보여주는 것이 제일 나쁘다)
  */
 export async function resolveOffline(chapter) {
-  const keys = (chapter.pages || []).map((p) => p.url);
-  if (keys.length === 0) return null;
+  if (!(chapter?.pages || []).length) return null;
 
-  const rows = await run([PAGES], 'readonly', (tx) => {
+  // 저장 행과 바이트를 한 트랜잭션에서 읽는다 — 나눠 읽으면 그 사이에 저장/삭제가
+  // 끼어들어 행과 바이트가 어긋난 상태를 볼 수 있다
+  const rows = await run([CHAPTERS, PAGES], 'readonly', async (tx) => {
+    const row = chapter?.id
+      ? await reqToPromise(tx.objectStore(CHAPTERS).get(chapter.id))
+      : null;
+
+    const keys = offlinePageKeys(chapter?.pages, row?.pages);
+    if (!keys) return null;
+
     const store = tx.objectStore(PAGES);
     return Promise.all(keys.map((k) => reqToPromise(store.get(k))));
   });
 
+  if (!rows) return null;
+  // 주소는 전부 확인된 다음에만 만든다. 중간에 포기하면서 만들어 둔 것은 새지 않게
   if (rows.some((r) => !r || !r.blob)) return null;
   return rows.map((r) => URL.createObjectURL(r.blob));
 }

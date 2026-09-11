@@ -6,7 +6,7 @@
  * IndexedDB 는 브라우저에만 있으니 그 판단만 순수 함수로 떼어 검사한다.
  */
 import assert from 'node:assert/strict';
-import { orphanPageUrls, formatBytes } from '../src/library.js';
+import { orphanPageUrls, offlinePageKeys, formatBytes } from '../src/library.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -50,6 +50,51 @@ check('없는 id 는 아무것도 지우지 않는다', () => {
 
 check('pages 가 없는 기록에도 죽지 않는다', () => {
   assert.deepEqual(orphanPageUrls([{ id: 'a' }, { id: 'b', pages: null }], 'a'), []);
+});
+
+console.log('\n오프라인 조회 키 고르기');
+
+check('재수집한 챕터도 담아둔 바이트를 읽는다', () => {
+  // 키에 CDN 서명이 들어 있어서 재수집하면 메모리 쪽 url 이 전부 바뀐다.
+  // 저장 행이 기준 — 아니면 전부 miss 후 온라인 폴백, 서명 만료 뒤엔 "이미지 실패"
+  const chapterPages = [p('sig-new-1'), p('sig-new-2')];
+  const storedPages = [p('sig-old-1'), p('sig-old-2')];
+  assert.deepEqual(offlinePageKeys(chapterPages, storedPages), [
+    p('sig-old-1').url,
+    p('sig-old-2').url,
+  ]);
+});
+
+check('장수가 다르면 저장 행을 버리고 메모리 쪽 키를 쓴다', () => {
+  // 장수가 다른 것은 판본이 다른 것이다. 순번으로 짝지으면 엉뚱한 컷이 뜬다
+  const chapterPages = [p('a1'), p('a2'), p('a3')];
+  assert.deepEqual(offlinePageKeys(chapterPages, [p('b1'), p('b2')]), [
+    p('a1').url,
+    p('a2').url,
+    p('a3').url,
+  ]);
+});
+
+check('저장 행이 없거나 비어 있으면 메모리 쪽 키를 쓴다', () => {
+  // 이 변경 전에 저장된 행, 그리고 아직 담지 않은 챕터
+  const chapterPages = [p('a1')];
+  const want = [p('a1').url];
+  assert.deepEqual(offlinePageKeys(chapterPages, undefined), want);
+  assert.deepEqual(offlinePageKeys(chapterPages, null), want);
+  assert.deepEqual(offlinePageKeys(chapterPages, []), want);
+});
+
+check('페이지가 없으면 오프라인 경로를 포기한다', () => {
+  assert.equal(offlinePageKeys([], [p('a1')]), null);
+  assert.equal(offlinePageKeys(undefined, undefined), null);
+  assert.equal(offlinePageKeys(null, []), null);
+});
+
+check('빈 키가 섞이면 성공할 수 없는 조회를 하지 않는다', () => {
+  assert.equal(offlinePageKeys([p('a1'), { url: '' }], null), null);
+  assert.equal(offlinePageKeys([p('a1'), {}], null), null);
+  // 고른 쪽이 저장 행일 때도 같다
+  assert.equal(offlinePageKeys([p('a1'), p('a2')], [p('b1'), { url: undefined }]), null);
 });
 
 console.log('\n용량 표기');

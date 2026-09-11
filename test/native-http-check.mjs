@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {
   base64ToBlob,
+  decodeDirectImageResponse,
   readRangedNativeBytes,
   shouldTryDirectImage,
   noteDirectImageFailure,
   pickImageSource,
+  directDisplayUrl,
 } from '../src/platform/nativeHttp.js';
 
 const bytes = Uint8Array.from([0, 1, 2, 127, 128, 255]);
@@ -47,6 +49,49 @@ noteDirectImageFailure('cdn.example', Object.assign(new Error('timeout'), { code
 assert.equal(shouldTryDirectImage('cdn.example'), false, '타임아웃 뒤엔 같은 호스트를 바로 중계로 보낸다');
 assert.equal(shouldTryDirectImage('other.example'), true, '다른 호스트는 영향받지 않는다');
 
+// 직접 받은 응답 판정: 같은 CDN 이 같은 JPEG 에 content-type 을 제멋대로 붙인다 (실측 v1.4.11)
+{
+  const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+  const jpegBase64 = Buffer.from(jpeg).toString('base64');
+
+  // 1. application/json → CapacitorHttp 가 본문을 이미 텍스트로 디코딩해 넘긴다. FF D8 이 U+FFFD 로
+  //    뭉개져 atob 이 InvalidCharacterError 를 던졌고, 그 throw 가 중계 폴백을 건너뛰어
+  //    src 도 못 넣은 컷이 "이미지 실패 · 다시 시도" 로 남았다 (실측 101·103·110·111 컷)
+  const jsonText = '\uFFFD\uFFFD\uFFFD\uFFFD JFIF ;CREATOR: gd-jpeg';
+  let decodedJson;
+  assert.doesNotThrow(
+    () => { decodedJson = decodeDirectImageResponse({ status: 200, contentType: 'application/json', data: jsonText }); },
+    'Latin1 범위 밖 본문이 atob 까지 가서 throw 하면 중계 폴백을 건너뛴다'
+  );
+  assert.equal(decodedJson.ok, false, 'application/json 본문은 이미 깨진 바이트 — 실패한 직접 시도로 접는다');
+  assert.equal(decodedJson.status, 502);
+  assert.match(decodedJson.reason, /content-type/, '운영자가 회선 문제와 구분할 수 있어야 한다');
+
+  // 2. font/woff2 → 같은 JPEG 인데 base64 문자열로 넘어온다. 실제로 렌더되던 경로니 막지 않는다
+  const decodedWoff = decodeDirectImageResponse({ status: 200, contentType: 'font/woff2', data: jpegBase64 });
+  assert.equal(decodedWoff.ok, true, 'content-type 이 이상해도 base64 바이트면 그대로 쓴다');
+  assert.equal(decodedWoff.blob.size, jpeg.byteLength, '받은 바이트 수가 그대로여야 한다');
+  assert.deepEqual(new Uint8Array(await decodedWoff.blob.arrayBuffer()), jpeg);
+
+  // 3. text/html → 차단 페이지. 기존 가드가 회귀하면 HTML 이 이미지로 들어간다
+  const decodedHtml = decodeDirectImageResponse({ status: 200, contentType: 'text/html; charset=utf-8', data: '<html>blocked' });
+  assert.equal(decodedHtml.ok, false, 'text/html 차단 응답은 계속 실패로 접는다');
+  assert.equal(decodedHtml.status, 502);
+
+  // 4. content-type 은 이미지인데 본문이 base64 가 아니면 atob 이 던진다 — 밖으로 내보내면 안 된다
+  let decodedBroken;
+  assert.doesNotThrow(
+    () => { decodedBroken = decodeDirectImageResponse({ status: 200, contentType: 'image/jpeg', data: '이건 base64 가 아니다' }); },
+    'base64 디코딩 실패가 밖으로 나가면 중계 폴백이 실행되지 않는다'
+  );
+  assert.equal(decodedBroken.ok, false, 'base64 가 아닌 본문도 실패한 직접 시도다');
+
+  // 5. content-type 이 틀린 건 회선 타임아웃이 아니다 — 호스트를 중계 전용으로 못 박으면
+  //    회선이 멀쩡한데도 세션 내내 직접 연결을 건너뛴다
+  decodeDirectImageResponse({ status: 200, contentType: 'application/json', data: jsonText });
+  assert.equal(shouldTryDirectImage('json.example'), true, 'content-type 오류는 타임아웃 메모를 더럽히지 않는다');
+}
+
 // 서재에서 꺼낸 화는 호출자가 page.url 에 blob 을 끼워 넣는다. originalUrl 이 남아 있어도
 // 그 blob 을 써야 한다 — 네트워크로 나가면 서명 만료된 원본을 받으려다 전부 실패한다
 // (실측: 앱을 껐다 켜면 담아둔 화가 "이미지 실패 · 다시 시도" 로 떴다).
@@ -74,4 +119,37 @@ assert.equal(
   'stored'
 );
 
-console.log('native HTTP 변환 2개 + 1MB bridge 분할 수신 + 직접 연결 타임아웃 메모 + 서재 blob 우선 통과');
+// 네이티브가 바이트를 못 받은 뒤 브라우저에게 맡길 주소 고르기.
+// 1. `.json` 컷: CapacitorHttp 는 arraybuffer·blob·text 어느 responseType 으로도 못 받지만
+//    (세 번 모두 똑같이 뭉개진 154629자), 같은 주소를 맨 new Image() 에 넣으면 600x1000 으로 렌더됐다
+assert.equal(
+  directDisplayUrl({
+    url: '/api/proxy-image?url=https%3A%2F%2Fcdn.example%2Fcut-101.json',
+    originalUrl: 'https://cdn.example/data/cut-101.json',
+    refererUrl: 'https://site.example/',
+  }),
+  'https://cdn.example/data/cut-101.json',
+  '네이티브로 못 받는 컷도 브라우저는 스니핑해서 띄운다 — 원본 주소를 그대로 넘긴다'
+);
+
+// 2. 상대 프록시 경로만 있으면 안 된다 — 앱에서는 https://localhost 로 붙어 404 가 되고
+//    엔진은 "이미지 실패" 를 다시 띄운다
+assert.equal(
+  directDisplayUrl({ url: '/api/proxy-image?url=https%3A%2F%2Fcdn.example%2Fx.webp' }),
+  null,
+  '상대 경로는 앱에서 localhost 로 붙어 404 다 — 엔진에 넘기면 안 된다'
+);
+
+// 3. blob:·data: 는 pickImageSource 가 이미 'stored' 로 걸러 여기 오지 않는다
+assert.equal(directDisplayUrl({ url: 'blob:mv/offline-1' }), null, 'blob: 은 직접 시도 대상이 아니다');
+assert.equal(directDisplayUrl({ url: 'data:image/png;base64,AAAA' }), null, 'data: 은 직접 시도 대상이 아니다');
+
+// 4. 주소가 아예 없는 컷 — throw 하지 말고 null 로 답해야 기존 에러 메시지가 그대로 뜬다
+assert.equal(directDisplayUrl({}), null, '주소 없는 컷은 null (기존 실패 메시지 유지)');
+assert.equal(directDisplayUrl(null), null, 'page 자체가 없어도 throw 하지 않는다');
+
+console.log(
+  'native HTTP 변환 2개 + 1MB bridge 분할 수신 + 직접 연결 타임아웃 메모' +
+    ' + 직접 응답 content-type 판정(json/woff2/html/깨진 base64 → 중계 폴백) + 서재 blob 우선' +
+    ' + 네이티브 실패 뒤 브라우저 직접 표시 주소(절대 http만, 상대·blob·data·없음 → null) 통과'
+);
