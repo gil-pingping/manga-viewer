@@ -266,15 +266,23 @@ function collectForNative(targetUrl) {
     // title 슬러그 같은 것뿐이다. 그런 값이 CP949 로 퍼센트 인코딩돼 있으면
     // searchParams 가 UTF-8 로 읽어 양쪽이 서로 다른 치환문자 뭉치가 된다 — 실측:
     // 맞는 회차 페이지가 눈앞에 떠 있는데도 COLLECTOR_WRONG_PAGE 로 거절됐다.
-    var mismatched = Array.from(expected.searchParams).some(function (entry) {
-      if (/[^\x20-\x7E]/.test(entry[1])) return false;
-      return current.searchParams.get(entry[0]) !== entry[1];
-    });
-    if (current.hostname !== expected.hostname ||
-        current.pathname.replace(/\/$/, '') !== expected.pathname.replace(/\/$/, '') ||
-        mismatched) {
-      throw new Error('COLLECTOR_WRONG_PAGE');
+    var reason = '';
+    if (current.hostname !== expected.hostname) {
+      reason = 'host ' + expected.hostname + '→' + current.hostname;
+    } else if (current.pathname.replace(/\/$/, '') !== expected.pathname.replace(/\/$/, '')) {
+      reason = 'path ' + expected.pathname + '→' + current.pathname;
+    } else {
+      Array.from(expected.searchParams).some(function (entry) {
+        if (/[^\x20-\x7E]/.test(entry[1])) return false;
+        var got = current.searchParams.get(entry[0]);
+        if (got === entry[1]) return false;
+        reason = entry[0] + ' ' + entry[1] + '→' + (got === null ? '없음' : got);
+        return true;
+      });
     }
+    // 어디가 어긋났는지 문구에 싣는다. 예전엔 이름만 던져서, 맞는 페이지가 눈앞에
+    // 떠 있는데 거절당해도 host·path·파라미터 중 무엇 때문인지 알 길이 없었다.
+    if (reason) throw new Error('COLLECTOR_WRONG_PAGE ' + reason);
     // 뉴토끼 회차는 본문 표식이 필수다. 아예 없는 응답도 광고로 대신 채우지 않는다.
     if (isNewtokiChapterUrl(targetUrl) &&
         !document.querySelector('[data-theme-viewer-images], .theme-viewer-images')) {

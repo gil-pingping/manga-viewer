@@ -43,7 +43,15 @@ async function collectOnce(targetUrl, { silent, collect }) {
         await new Promise((resolve) => setTimeout(resolve, 800));
         continue;
       }
-      if (wrongPage) throw new Error('원본 회차가 다른 페이지로 바뀌어 수집하지 못했습니다. 원본 주소를 확인해 주세요.');
+      if (wrongPage) {
+        // 어디가 어긋났는지(host·path·파라미터)를 같이 보여준다. 사유 없이 이름만
+        // 보이면 맞는 페이지가 떠 있는데도 왜 거절됐는지 알 수 없다.
+        const detail = (error?.message || '').split('COLLECTOR_WRONG_PAGE').pop().trim();
+        throw new Error(
+          '원본 회차가 다른 페이지로 바뀌어 수집하지 못했습니다.'
+          + (detail ? `\n어긋난 곳: ${detail}` : ' 원본 주소를 확인해 주세요.')
+        );
+      }
       /**
        * 여기 오면 네이티브 수집기가 끝나지 않은 호출을 물고 있다. 우리 쪽 호출은 이미
        * 직렬화했으므로 원인은 앱 안이 아니다 — 제한 시간 없는 구형 APK 가 응답 없는
