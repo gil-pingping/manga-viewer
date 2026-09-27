@@ -34,8 +34,26 @@ export function parseSeriesAndEpisode(rawTitle) {
   let episodeNum = 0;
   let seriesTitle = original;
   let episodeHead = '';
+  let rangeLabel = '';
 
-  for (const pattern of epPatterns) {
+  /**
+   * 묶음 회차: "나의 히어로 아카데미아 1~5화", "6~10화".
+   * 범위를 모르면 "10화"만 회차로 읽고 "6~" 가 작품명에 붙어서
+   * 1~5화 → 6~10화 다음 화 이동이 "다른 작품" 으로 막혔다 (뉴토키 실측).
+   * 물결표는 공백을 허용하고, 하이픈은 "2-3화" 처럼 붙어 있을 때만 범위로 본다 —
+   * "시즌2 - 3화" 를 범위로 읽으면 안 된다. 끝이 시작보다 커야 범위다.
+   */
+  const range = title.match(/(\d+(?:\.\d+)?)(?:\s*[~～〜]\s*|-)(\d+(?:\.\d+)?)\s*화/);
+  if (range && parseFloat(range[2]) > parseFloat(range[1])) {
+    episodeNum = parseFloat(range[1]);
+    rangeLabel = `${range[1]}~${range[2]}화`;
+    let head = title.substring(0, range.index).trim();
+    head = head.replace(/[\s\-_:|]+$/, '').trim();
+    episodeHead = head;
+    if (head) seriesTitle = head;
+  }
+
+  for (const pattern of rangeLabel ? [] : epPatterns) {
     const match = title.match(pattern);
     if (match) {
       episodeNum = parseFloat(match[1]);
@@ -56,9 +74,9 @@ export function parseSeriesAndEpisode(rawTitle) {
   if (!seriesTitle) seriesTitle = original;
 
   // 특수 기호 제거 및 이름 다듬기
-  seriesTitle = cleanSeriesName(seriesTitle);
+  seriesTitle = cleanSeriesName(collapseRepeatedTitle(seriesTitle));
 
-  const episodeLabel = episodeNum > 0 ? `${episodeNum}화` : original;
+  const episodeLabel = rangeLabel || (episodeNum > 0 ? `${episodeNum}화` : original);
 
   return {
     seriesTitle,
@@ -249,6 +267,31 @@ export function findListPageUrls(links, listUrl) {
     }
   }
   return [...out];
+}
+
+/**
+ * "작품명 + 작품명(가운데 말줄임)" 로 반복된 제목을 작품명 하나로 접는다.
+ *
+ * 뉴토키 실측: 같은 작품인데 1~10화는 "나의 히어로 아카데미아 6~10화",
+ * 11화부터는 "나의 히어로 아카데미아 나의 히어로 아카데…미아 11~15화" 로 온다.
+ * 안 접으면 작품명이 달라져 다음 화 이동이 "다른 작품" 으로 막힌다.
+ * 뒷부분이 앞부분과 똑같거나, 말줄임 앞뒤가 앞부분의 머리·꼬리와 맞을 때만 접는다.
+ */
+function collapseRepeatedTitle(name) {
+  const text = name.trim();
+  for (let i = text.indexOf(' '); i > 0; i = text.indexOf(' ', i + 1)) {
+    const first = text.slice(0, i).trim();
+    const rest = text.slice(i + 1).trim();
+    if (!first || !rest) continue;
+    if (rest === first) return first;
+
+    const cut = rest.match(/^(.+?)\s*(?:…|\.{3})\s*(.*)$/);
+    if (cut && first.startsWith(cut[1]) && first.endsWith(cut[2])
+      && cut[1].length + cut[2].length <= first.length) {
+      return first;
+    }
+  }
+  return text;
 }
 
 /** 시리즈명 정규화 (괄호, 구획 문자 정리) */
