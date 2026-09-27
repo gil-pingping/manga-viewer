@@ -10,7 +10,6 @@ const stateKeys = [
   'mangaViewer.settings',
   'mangaViewer.progress',
   'mangaViewer.lastChapterId',
-  'mangaViewer.hasInitialized',
 ];
 
 async function stateSnapshot(page) {
@@ -204,7 +203,6 @@ try {
   assert.deepEqual(JSON.parse(restored.local['mangaViewer.settings']), beforeLocalRemoval.kv.settings);
   assert.deepEqual(JSON.parse(restored.local['mangaViewer.progress']), restored.kv.progress);
   assert.equal(restored.local['mangaViewer.lastChapterId'], restored.kv.lastChapterId);
-  assert.equal(restored.local['mangaViewer.hasInitialized'], 'true');
   assert.deepEqual(await legacyCounts(page), { chapters: 1001, recent: 31 }, 'reload 뒤 legacy 원본 유지');
   assert.deepEqual(await page.evaluate(() => window.__idbClearCalls), [], 'reload 중 store.clear 금지');
 
@@ -242,7 +240,14 @@ try {
   assert.equal(progressAfterStorageFailure['legacy-1000'], 1, 'localStorage 실패가 기존 progress를 지우지 않음');
   assert.equal(progressAfterStorageFailure['after-storage-failure'], 7);
 
+  /**
+   * 서재 삭제. 편집 모드에서 회차 줄의 삭제 버튼을 두 번 누른다.
+   * 목록·오프라인 바이트·읽은 위치가 함께 지워져야 하고, 읽던 화를 지우면 다른 화로 옮겨야 한다.
+   */
   await page.locator('.shelf-card', { hasText: '원피스' }).click();
+  await page.click('#btn-shelf-edit');
+  const catalogBefore = (await stateSnapshot(page)).catalog.length;
+
   await page.evaluate(() => {
     const original = IDBDatabase.prototype.transaction;
     window.__restoreTransaction = () => { IDBDatabase.prototype.transaction = original; };
@@ -254,10 +259,52 @@ try {
       return original.call(this, stores, mode, ...args);
     };
   });
-  await page.locator('.shelf-ep-item .ep-del').first().click();
-  await page.waitForFunction(() => document.querySelector('#toast.is-error')?.textContent.includes('삭제'));
+  const savedRow = page.locator('.shelf-ep-item:not(.is-current)', { hasText: '담김' }).first();
+  await savedRow.locator('.shelf-ep-del').click();
+  assert.equal((await stateSnapshot(page)).catalog.length, catalogBefore, '첫 탭은 지우지 않고 확인만 묻는다');
+  await savedRow.locator('.shelf-ep-del.is-armed').click();
+  await page.waitForFunction(() => document.querySelector('#toast.is-error')?.textContent.includes('오프라인'));
   await page.evaluate(() => window.__restoreTransaction());
-  assert.equal((await legacyCounts(page)).chapters, 1001, 'offline 삭제 실패 시 원본 유지');
+  assert.equal((await legacyCounts(page)).chapters, 1001, 'offline 삭제 실패 시 원본 바이트 유지');
+  assert.equal((await stateSnapshot(page)).catalog.length, catalogBefore - 1, '목록 삭제는 끝난다');
+
+  // 성공 경로: 담긴 화를 지우면 오프라인 바이트도 같이 빠진다
+  const okRow = page.locator('.shelf-ep-item:not(.is-current)', { hasText: '담김' }).first();
+  await okRow.locator('.shelf-ep-del').click();
+  await okRow.locator('.shelf-ep-del.is-armed').click();
+  await page.waitForFunction(async (before) => {
+    const db = await new Promise((resolveOpen) => {
+      const request = indexedDB.open('mangaViewerState');
+      request.onsuccess = () => resolveOpen(request.result);
+    });
+    const count = await new Promise((resolveCount) => {
+      const request = db.transaction('catalog').objectStore('catalog').count();
+      request.onsuccess = () => resolveCount(request.result);
+    });
+    db.close();
+    return count === before - 2;
+  }, catalogBefore);
+  // 바이트 삭제는 목록 삭제 뒤에 이어진다 — 끝날 때까지 기다린다
+  for (let i = 0; i < 50 && (await legacyCounts(page)).chapters !== 1000; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal((await legacyCounts(page)).chapters, 1000, '지운 화의 오프라인 바이트도 지워진다');
+
+  // 읽던 화가 든 작품을 통째로 지우면 다른 화로 옮긴다 (읽던 화 = 위에서 붙여넣은 만화)
+  const currentId = await page.evaluate(async () => (await import('/src/state.js')).readLastChapterId());
+  const currentTitle = await page.textContent('#manga-title');
+  await page.click('.shelf-back-btn');
+  await page.locator('.shelf-card', { hasText: currentTitle }).click();
+  await page.locator('.shelf-episodes-header .shelf-card-delete-action').click();
+  await page.locator('.shelf-episodes-header .shelf-card-delete-action.is-armed').click();
+  await page.waitForFunction((title) => document.querySelector('#manga-title')?.textContent !== title, currentTitle);
+  const afterCurrent = await stateSnapshot(page);
+  assert.equal(afterCurrent.catalog.length, catalogBefore - 3, '읽던 화도 목록에서 지워진다');
+  assert.ok(!afterCurrent.catalog.some((item) => item.id === currentId), '지운 화가 목록에 남으면 안 된다');
+  assert.ok(!(currentId in afterCurrent.kv.progress), '지운 화의 읽은 위치도 지워진다');
+  assert.equal(await page.locator('.shelf-episodes-view').count(), 0, '작품이 사라지면 책장으로 돌아간다');
+  await page.click('#btn-shelf-edit');
+  console.log('  shelf delete ok');
 
   for (const mode of ['malformed', 'inaccessible']) {
     const badContext = await browser.newContext();
@@ -320,7 +367,6 @@ try {
         catalog.put({ id: 'chapter-a', title: '첫 번째 화', pages: [{ url: image }] });
         catalog.put({ id: 'chapter-b', title: '기억한 두 번째 화', pages: [{ url: image }] });
         kv.put({ key: 'lastChapterId', value: 'chapter-b' });
-        kv.put({ key: 'initialized', value: true });
         kv.put({ key: 'migration.v1', value: 'complete' });
       };
       request.onsuccess = () => {
@@ -366,7 +412,6 @@ try {
         const db = request.result;
         db.createObjectStore('catalog', { keyPath: 'id' });
         const kv = db.createObjectStore('kv', { keyPath: 'key' });
-        kv.put({ key: 'initialized', value: true });
         kv.put({ key: 'migration.v1', value: 'complete' });
       };
       request.onsuccess = () => {
@@ -375,18 +420,6 @@ try {
       };
       request.onerror = () => reject(request.error);
     });
-  });
-  await initializedPage.addInitScript(() => {
-    const originalGet = Storage.prototype.getItem;
-    const originalSet = Storage.prototype.setItem;
-    Storage.prototype.getItem = function (key) {
-      if (key === 'mangaViewer.hasInitialized') throw new Error('forced initialized read failure');
-      return originalGet.call(this, key);
-    };
-    Storage.prototype.setItem = function (key, value) {
-      if (key === 'mangaViewer.hasInitialized') throw new Error('forced initialized write failure');
-      return originalSet.call(this, key, value);
-    };
   });
   await initializedPage.goto(origin);
   await initializedPage.waitForFunction(() => document.querySelector('#empty-state h2')?.textContent.includes('불러온'));
@@ -404,7 +437,7 @@ try {
     db.close();
     return count;
   });
-  assert.equal(await initializedCatalogCount(), 0, 'KV initialized=true이면 sample을 다시 만들지 않음');
+  assert.equal(await initializedCatalogCount(), 0, '빈 서재로 시작하면 샘플 없이 비어 있어야 한다');
 
   await initializedPage.evaluate(() => {
     const original = IDBObjectStore.prototype.put;
@@ -435,11 +468,6 @@ try {
     () => document.querySelector('#empty-state h2')?.textContent.includes('저장소'),
     null,
     { timeout: 20000 }
-  );
-  assert.equal(
-    await failurePage.evaluate(() => localStorage.getItem('mangaViewer.hasInitialized')),
-    null,
-    '저장소 실패를 신규 초기화로 오인하지 않음'
   );
   await failureContext.close();
 

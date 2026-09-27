@@ -3,7 +3,7 @@
  *
  * 브라우저가 필요 없는 순수 로직만 검증한다: parseRawText (주소 목록 붙여넣기),
  * findAdjacentLink (이전/다음 화 링크 찾기 — 최소 DOM 스텁으로).
- * 북마클릿 수집(collector.js)은 DOM 이 있어야 하므로 실제 페이지에서 확인한다.
+ * WebView 주입 수집(collector.js)은 DOM 이 있어야 하므로 실제 페이지에서 확인한다.
  */
 import assert from 'node:assert/strict';
 import { UrlHarvester, findAdjacentLink } from '../src/urlHarvester.js';
@@ -110,25 +110,6 @@ check('확장자 있는 주소가 섞이면 그것만 고른다', () => {
     pages.map((p) => p.originalUrl),
     ['https://cdn.test/ch1/001.webp']
   );
-});
-
-console.log('\nparseImportHash');
-
-check('latest 센티널을 알아본다', () => {
-  assert.equal(UrlHarvester.parseImportHash('#import=latest'), 'latest');
-});
-
-check('import 해시가 없으면 null', () => {
-  assert.equal(UrlHarvester.parseImportHash(''), null);
-  assert.equal(UrlHarvester.parseImportHash('#other=1'), null);
-});
-
-check('인라인 페이로드를 페이지로 바꾼다', () => {
-  const payload = { title: '3화', pages: ['https://cdn.test/ch3/001.webp'] };
-  const out = UrlHarvester.parseImportHash('#import=' + encodeURIComponent(JSON.stringify(payload)));
-  assert.equal(out.title, '3화');
-  assert.equal(out.pages.length, 1);
-  assert.equal(out.pages[0].originalUrl, 'https://cdn.test/ch3/001.webp');
 });
 
 /* ==================================================================== */

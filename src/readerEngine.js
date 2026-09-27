@@ -113,6 +113,17 @@ export class ReaderEngine {
     this.probeLeadingImages();
   }
 
+  /** 읽던 화를 서재에서 지워 보여줄 게 없을 때. 이미지를 놓고 화면을 비운다 */
+  clear() {
+    this.episode = null;
+    this.segments = [];
+    this.pages = [];
+    this.currentIndex = 0;
+    this.releaseImageCache();
+    this.resetZoom();
+    this.container?.replaceChildren();
+  }
+
   createSegment(episodeData, startIndex) {
     const pageCount = Array.isArray(episodeData?.pages) ? episodeData.pages.length : 0;
     return {

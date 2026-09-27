@@ -2,8 +2,6 @@
  * Vite 로컬 프록시 플러그인
  *
  * 라우트
- *   POST /api/import          북마클릿이 수집한 이미지 목록을 받아 메모리에 보관
- *   GET  /api/import/latest   뷰어가 방금 들어온 목록을 꺼내간다
  *   GET  /api/proxy-image     이미지 바이너리를 서버에서 가져와 중계 (Referer 유지)
  *
  * 이미지 중계가 필요한 이유: 상당수 이미지 호스트가 Referer 없는 요청이나
@@ -35,13 +33,6 @@ import {
  */
 export { assertFetchableUrl };
 
-const IMPORT_TTL_MS = 5 * 60 * 1000;
-const MAX_PAGES = 2000;
-const MAX_BODY_BYTES = 4 * 1024 * 1024;
-
-/** 최근 import 페이로드 (단일 슬롯이면 충분하다) */
-let latestImport = null;
-
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -49,7 +40,7 @@ function sendJson(res, status, payload) {
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
   });
   res.end(body);
 }
@@ -59,29 +50,11 @@ function handlePreflight(req, res) {
   res.writeHead(204, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Max-Age': '86400',
   });
   res.end();
   return true;
-}
-
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let total = 0;
-    req.on('data', (chunk) => {
-      total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
-        reject(new Error('요청 본문이 너무 큽니다.'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
 }
 
 /**
@@ -132,7 +105,7 @@ function getBrowser() {
 /**
  * 페이지에 주입할 선별 규칙 소스.
  *
- * 북마클릿이 쓰는 것과 **같은 소스**다. collector 의 BUNDLED 를 재사용하므로
+ * Android WebView 주입 스크립트와 **같은 소스**다. collector 의 BUNDLED 를 재사용하므로
  * 규칙 사본이 생기지 않는다 — 이 프로젝트에서 복붙이 버그의 근원이었다.
  */
 let rulesSourcePromise = null;
@@ -146,7 +119,7 @@ function getRulesSource() {
       const here = dirname(fileURLToPath(import.meta.url));
 
       // 소스를 파일에서 그대로 읽는다. 모듈 로더가 어떻게 변환했는지에
-      // 의존하지 않으므로 서버·북마클릿이 같은 규칙을 쓴다는 보장이 단순해진다.
+      // 의존하지 않으므로 서버·WebView 가 같은 규칙을 쓴다는 보장이 단순해진다.
       const files = [join(here, 'src/core/imageRules.js'), join(here, 'src/collect/fromDocument.js')];
       const parts = [];
       for (const f of files) {
@@ -236,64 +209,6 @@ export default function mangaProxyPlugin() {
       });
 
       /* ---------------------------------------------------------------- */
-      /* 북마클릿 → 뷰어 인수인계                                          */
-      /* ---------------------------------------------------------------- */
-      server.middlewares.use('/api/import', async (req, res) => {
-        if (handlePreflight(req, res)) return;
-
-        // mount 경로가 벗겨지므로 '/api/import/latest' 는 '/latest' 로 들어온다
-        const isLatest = /^\/latest\/?(\?|$)/.test(req.url || '/');
-
-        if (isLatest) {
-          if (!latestImport || Date.now() - latestImport.at > IMPORT_TTL_MS) {
-            latestImport = null;
-            sendJson(res, 404, { ok: false, error: '대기 중인 수집 결과가 없습니다.' });
-            return;
-          }
-          sendJson(res, 200, { ok: true, payload: latestImport.payload });
-          return;
-        }
-
-        if (req.method !== 'POST') {
-          sendJson(res, 405, { ok: false, error: 'POST 로 보내주세요.' });
-          return;
-        }
-
-        try {
-          const raw = await readBody(req);
-          const data = JSON.parse(raw);
-
-          const pages = Array.isArray(data.pages) ? data.pages : [];
-          const cleanPages = pages
-            .filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))
-            .slice(0, MAX_PAGES);
-
-          if (cleanPages.length === 0) {
-            sendJson(res, 400, { ok: false, error: '유효한 이미지 주소가 없습니다.' });
-            return;
-          }
-
-          latestImport = {
-            at: Date.now(),
-            payload: {
-              title: typeof data.title === 'string' ? data.title.slice(0, 200) : '수집한 만화',
-              sourceUrl: typeof data.sourceUrl === 'string' ? data.sourceUrl : null,
-              prevUrl: typeof data.prevUrl === 'string' ? data.prevUrl : null,
-              nextUrl: typeof data.nextUrl === 'string' ? data.nextUrl : null,
-              pages: cleanPages,
-            },
-          };
-
-          server.config.logger.info(
-            `[manga-proxy] 수집 ${cleanPages.length}장 수신: ${latestImport.payload.title}`
-          );
-          sendJson(res, 200, { ok: true, count: cleanPages.length });
-        } catch (err) {
-          sendJson(res, 400, { ok: false, error: err.message });
-        }
-      });
-
-      /* ---------------------------------------------------------------- */
       /* 페이지 HTML 가져오기                                              */
       /*                                                                  */
       /* 서버가 대신 받아오므로 CORS·CSP 를 타지 않는다. 네이버 웹툰처럼    */
@@ -339,9 +254,9 @@ export default function mangaProxyPlugin() {
       /*                                                                  */
       /* fetch-page 는 서버가 받은 HTML 만 본다. 컷을 JS 가 나중에 채우면    */
       /* 거기엔 아무것도 없다. 그때 실제 브라우저로 열어 렌더된 DOM 을 읽는다.*/
-      /* 덕분에 주소 하나만 넣으면 그런 사이트도 된다 (북마클릿 불필요).      */
+      /* 덕분에 주소 하나만 넣으면 그런 사이트도 된다.                        */
       /*                                                                  */
-      /* 선별 규칙은 북마클릿이 쓰는 것과 같은 소스를 주입한다.              */
+      /* 선별 규칙은 WebView 주입 스크립트와 같은 소스를 주입한다.            */
       /* 사본을 만들지 않으려고 collector 의 BUNDLED 를 그대로 재사용한다.   */
       /* ---------------------------------------------------------------- */
       server.middlewares.use('/api/render-page', async (req, res) => {

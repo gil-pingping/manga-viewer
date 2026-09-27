@@ -15,7 +15,6 @@
  * @property {string|null} sourceUrl
  * @property {string|null} prevUrl
  * @property {string|null} nextUrl
- * @property {boolean} [isDemo]
  */
 
 /**
@@ -23,19 +22,16 @@
  * @property {'auto'|'strip'|'single'|'double'} mode
  * @property {'RTL'|'LTR'} direction
  * @property {'slide'|'fade'|'none'} transition
- * @property {number} speed
  * @property {number} brightness
- * @property {'none'|'warm'|'sepia'|'dark'} paper
+ * @property {'none'|'amoled'|'sepia'|'contrast'|'night'} paper
  */
 
-import { SAMPLE_MANGA_SERIES } from './sampleData.js';
 import { getKv, putKv } from './catalogStore.js';
 
 export const PROGRESS_KEY = 'mangaViewer.progress';
 export const SETTINGS_KEY = 'mangaViewer.settings';
 export const LAST_CHAPTER_KEY = 'mangaViewer.lastChapterId';
 export const RECENT_CHAPTERS_KEY = 'mangaViewer.recentChapters';
-export const INITIALIZED_KEY = 'mangaViewer.hasInitialized';
 export const CHROME_IDLE_MS = 3200;
 
 let writeTail = Promise.resolve();
@@ -67,7 +63,6 @@ export const defaultSettings = {
   mode: 'auto',
   direction: 'RTL',
   transition: 'slide',
-  speed: 5,
   brightness: 100,
   paper: 'none',
 };
@@ -123,6 +118,26 @@ export function saveProgress(chapterId, pageNumber) {
   return queueStateWrite(() => putKv('progress', all));
 }
 
+/** 서재에서 지운 화의 읽은 위치를 버린다 */
+export function forgetProgress(chapterIds) {
+  const all = readProgress();
+  let changed = false;
+  for (const id of chapterIds || []) {
+    if (Object.hasOwn(all, id)) {
+      delete all[id];
+      changed = true;
+    }
+  }
+  if (!changed) return Promise.resolve();
+  progressState = all;
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {
+    /* 무시 */
+  }
+  return queueStateWrite(() => putKv('progress', all));
+}
+
 export function readLastChapterId() {
   if (lastChapterIdState) return lastChapterIdState;
   try {
@@ -142,15 +157,6 @@ export function saveLastChapterId(id) {
     /* 무시 */
   }
   return queueStateWrite(() => putKv('lastChapterId', id));
-}
-
-export function saveInitialized(initialized = true) {
-  try {
-    localStorage.setItem(INITIALIZED_KEY, String(initialized));
-  } catch {
-    /* 무시 */
-  }
-  return queueStateWrite(() => putKv('initialized', Boolean(initialized)));
 }
 
 export function readRecentChapters() {
@@ -247,11 +253,10 @@ function parsedObject(raw) {
  * 쓰이므로(localStorage → kv) kv 가 있으면 그게 최신이거나 같다.
  */
 export async function restoreStateFromKv(state) {
-  const [kvSettings, kvProgress, kvLastChapterId, kvInitialized] = await Promise.all([
+  const [kvSettings, kvProgress, kvLastChapterId] = await Promise.all([
     getKv('settings'),
     getKv('progress'),
     getKv('lastChapterId'),
-    getKv('initialized'),
   ]);
 
   const localSettings = parsedObject(localValue(SETTINGS_KEY));
@@ -291,17 +296,6 @@ export async function restoreStateFromKv(state) {
   } else {
     lastChapterIdState = null;
   }
-
-  const localInitialized = localValue(INITIALIZED_KEY);
-  if (typeof kvInitialized === 'boolean') {
-    state.initialized = kvInitialized;
-    setLocalValue(INITIALIZED_KEY, String(kvInitialized));
-  } else if (localInitialized != null) {
-    state.initialized = localInitialized === 'true';
-    await putKv('initialized', state.initialized);
-  } else {
-    state.initialized = false;
-  }
 }
 
 export function createInitialState() {
@@ -310,7 +304,7 @@ export function createInitialState() {
     chapters: [],
     currentId: null,
     currentShelfTab: 'comic',
-    initialized: false,
+    isShelfEditMode: false,
     settings: loadSettings(),
     chromeVisible: true,
     saved: new Map(),

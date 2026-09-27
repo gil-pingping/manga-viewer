@@ -22,7 +22,7 @@ Cloudflare 웹앱, Android APK, Termux 로컬 서버 세 경로를 지원한다.
 - 이전 화·다음 화 이동
 - 한 장·두 장·세로 스크롤, RTL/LTR, 확대, 스와이프, 자동 넘김
 - CBZ·ZIP·여러 이미지 파일 열기
-- IndexedDB 오프라인 서재와 10화 연속 저장
+- IndexedDB 오프라인 서재와 10화 연속 저장, 회차·작품 단위 삭제
 - 서비스워커 기반 오프라인 앱 부팅
 - Cloudflare Worker 인증·페이지 프록시·이미지 프록시
 - 애니라이프 watch 주소 저장 및 앱 내부 HLS 영상 재생
@@ -43,7 +43,7 @@ ADB 없이 APK 파일을 태블릿으로 옮겨 설치해도 된다. 상세 절�
 
 ### 2. 만화 불러오기
 
-1. 앱에서 **주소 붙여넣기 · 북마클릿**을 누른다.
+1. 앱에서 **불러오기**를 누른다. CBZ·이미지 파일도 같은 창에서 연다.
 2. 회차 페이지 주소를 넣고 **불러오기**를 누른다.
 3. 로그인이 필요하면 **로그인 · 페이지 보기**를 누르고 사이트 로그인을 끝낸다.
 4. 자동 수집이 끝나면 뷰어로 돌아온다.
@@ -112,6 +112,10 @@ Android에서는 정적 결과가 0~2장이면 WebView 렌더 수집으로 전�
 - 웹앱: Worker `/api/proxy-image?url=&ref=`가 원본 Referer로 중계한다.
 - Android: 태블릿 네이티브 HTTP가 원본 이미지와 Referer를 직접 보낸다.
 - 오프라인 서재: 응답 바이트를 IndexedDB에 저장하고 읽을 때 blob URL로 복원한다.
+
+서재 삭제는 **목록 → 서재 편집**에서 한다. 작품 카드나 작품 화면 머리의 **작품 전체 삭제**,
+회차 줄의 **삭제**를 두 번 누르면 목록·오프라인 바이트·읽은 위치가 함께 지워진다. 읽던 화를
+지우면 남은 가장 최근 화로 넘어가고, 남은 화가 없으면 빈 화면이 된다.
 
 서재 데이터는 서버에 없다. 브라우저·앱 오리진별 IndexedDB 안에만 있다. 앱 껍데기와 Vite
 해시 자산은 서비스워커 install 단계에서 함께 캐시하므로 첫 온라인 실행 뒤 서버가 없어도
@@ -188,7 +192,7 @@ Java 플러그인·Capacitor 의존성·Android 권한·공개키 변경은 APK 
 ## Cloudflare 웹판과 Termux
 
 웹판은 설치 없이 쓸 수 있고 PWA로 홈 화면에 추가할 수 있다. Worker에는 브라우저가 없으므로
-JavaScript가 이미지를 나중에 만드는 사이트나 로그인이 필요한 페이지는 북마클릿을 사용한다.
+JavaScript가 이미지를 나중에 만드는 사이트나 로그인이 필요한 페이지는 Android APK에서 연다.
 
 APK를 설치할 수 없으면 태블릿 Termux에서 `npm run serve`를 실행한다. 항상
 `http://localhost:4173`을 사용한다. 주소를 바꾸면 IndexedDB 서재가 갈리고 LAN HTTP에서는
@@ -199,7 +203,8 @@ APK를 설치할 수 없으면 태블릿 Termux에서 `npm run serve`를 실행�
 | 경로 | 책임 |
 |---|---|
 | `main.js` | UI 배선, 챕터 이동, 다음 화 프리로드 |
-| `src/urlHarvester.js` | URL·북마클릿·텍스트·파일 수집 진입점 |
+| `src/urlHarvester.js` | URL·텍스트·파일 수집 진입점 |
+| `src/collector.js` | core 규칙을 문자열화한 WebView 주입 수집 스크립트 |
 | `src/core/imageRules.js` | 본문 이미지 선별 단일 진실 |
 | `src/core/layout.js` | 보기 모드·펼침·페이지 배치 |
 | `src/core/chapterNav.js` | 이전/다음 화 탐색과 프리로드 일치 판정 |
@@ -216,7 +221,7 @@ APK를 설치할 수 없으면 태블릿 Termux에서 `npm run serve`를 실행�
 | `public/sw.js` | 앱 껍데기·Vite 자산 오프라인 캐시 |
 
 핵심 원칙: **판단은 순수 함수, DOM·Android·서버 접촉은 얇은 어댑터**. 같은 선별 규칙을
-북마클릿, HTML 파서, Android WebView가 재사용한다.
+HTML 파서와 Android WebView가 재사용한다.
 
 ## 보안 경계
 

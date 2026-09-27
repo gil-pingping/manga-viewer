@@ -7,11 +7,8 @@ import {
 import { buildAnilifePlayback, decryptAnilifeMedia } from './src/collect/anilifeMedia.js';
 import { AnimePlayer } from './src/ui/animePlayer.js';
 import { ReaderEngine } from './src/readerEngine.js';
-import { buildBookmarklet } from './src/collector.js';
 import {
   findChapter,
-  indexOfChapter,
-  realNeighbor as findRealNeighbor,
   hasAdjacent as canGoAdjacent,
   resolveAdjacent,
   findAdjacentPrefetch,
@@ -45,8 +42,6 @@ import {
   getCurrentBundleId,
 } from './src/platform/liveUpdate.js';
 import { APP_VERSION, BUILD_TIME } from './src/version.js';
-import { ONE_PIECE_COVER_DATA } from './src/sampleCoverData.js';
-import { SAMPLE_MANGA_SERIES } from './src/sampleData.js';
 import {
   createInitialState,
   saveSettings as persistSettings,
@@ -57,7 +52,7 @@ import {
   saveRecentChapters,
   readRecentChaptersForMigration,
   restoreStateFromKv,
-  saveInitialized,
+  forgetProgress,
   queueStateWrite,
   flushStateWrites,
   CHROME_IDLE_MS,
@@ -85,13 +80,13 @@ function catalogItem(item, touch = false) {
 }
 
 function persistCatalogItem(item) {
-  if (!item?.id || item.isDemo || item.id.startsWith('demo-')) return Promise.resolve();
+  if (!item?.id) return Promise.resolve();
   return queueStateWrite(() => putCatalogItem(catalogItem(item, true)));
 }
 
 function persistCatalogItems(items) {
   const records = items
-    .filter((item) => item?.id && !item.isDemo && !item.id.startsWith('demo-'))
+    .filter((item) => item?.id)
     .map((item) => catalogItem(item, true));
   return records.length > 0
     ? queueStateWrite(() => putCatalogItems(records))
@@ -119,6 +114,10 @@ let bingePromise = null;
 let chapterNavigationBusy = false;
 let animePlayer = null;
 let animePlaySequence = 0;
+/** 서재에서 지울 때마다 오른다. 그 전에 시작한 미리 받기 결과는 버린다 */
+let catalogEpoch = 0;
+/** 서재에서 열어둔 작품 (null = 책장). 편집·삭제 뒤 다시 그려도 같은 화면에 머문다 */
+let shelfSeries = null;
 
 function saveSettings() {
   persistSettings(state.settings);
@@ -155,8 +154,6 @@ const el = {
   btnEpList: $('btn-ep-list'),
   btnImport: $('btn-import'),
   btnReload: $('btn-reload'),
-  btnFiles: $('btn-files'),
-  btnDisplay: $('btn-display'),
   btnSettings: $('btn-settings'),
 
   btnPrevEp: $('btn-prev-ep'),
@@ -169,9 +166,7 @@ const el = {
   btnFullscreen: $('btn-fullscreen'),
 
   modalImport: $('modal-import'),
-  modalFiles: $('modal-files'),
   modalEpisodes: $('modal-episodes'),
-  modalDisplay: $('modal-display'),
   modalSettings: $('modal-settings'),
   modalLinkManage: $('modal-link-manage'),
 
@@ -188,8 +183,6 @@ const el = {
   btnSave10: $('btn-save-10'),
   rawInput: $('raw-input'),
   btnSubmitUrl: $('btn-submit-url'),
-  bookmarkletUrl: $('bookmarklet-url'),
-  btnCopyBookmarklet: $('btn-copy-bookmarklet'),
 
   dropZone: $('drop-zone'),
   fileInput: $('file-input'),
@@ -309,13 +302,12 @@ function openCatalogItem(item) {
   else openChapter(item.id);
 }
 
-function currentIndex() {
-  return indexOfChapter(state.chapters, state.currentId);
-}
-
 /** 불러온 게 없을 때. 빈 컷 프레임을 그리면 고장으로 보이니 아예 안 그린다 */
 function showEmptyState() {
   state.currentId = null;
+  nextChapterPrefetch = null;
+  engine?.clear();
+  revokeObjectUrls();
   document.getElementById('app').classList.add('is-empty');
 
   el.title.textContent = '만화 뷰어';
@@ -426,8 +418,10 @@ function prefetchNextChapter(chapter) {
     nextChapterPrefetch.url === chapter.nextUrl
   ) return;
 
+  // 받는 사이에 서재에서 지웠으면 결과를 버린다 — 지운 작품이 미리 받기로 되살아나면 안 된다
+  const epoch = catalogEpoch;
   const promise = UrlHarvester.fetchFromUrl(chapter.nextUrl, { silentRenderedFallback: true })
-    .then((harvested) => harvested?.pages?.length
+    .then((harvested) => harvested?.pages?.length && epoch === catalogEpoch
       ? storeHarvestedChapter(harvested, 'prefetch', chapter)
       : null)
     .catch((err) => {
@@ -609,12 +603,16 @@ async function toggleBingeMode() {
     return;
   }
 
+  stopBinge();
+  toast('정주행 종료');
+}
+
+function stopBinge() {
   bingeEnabled = false;
   bingeGeneration++;
   bingePromise = null;
   bingeTailId = null;
   updateBingeButton();
-  toast('정주행 종료');
 }
 
 async function canLoadFirstPage(chapter) {
@@ -720,11 +718,7 @@ function ensureBingeAhead() {
     // Offline Blob URLs retain backing bytes until revoked. Keep one seamless
     // handoff only; normal next-episode navigation then releases prior URLs.
     if (offline) {
-      bingeEnabled = false;
-      bingeGeneration++;
-      bingePromise = null;
-      bingeTailId = null;
-      updateBingeButton();
+      stopBinge();
       toast('오프라인 정주행은 메모리 보호를 위해 다음 1화까지만 이어집니다.');
       return next;
     }
@@ -744,10 +738,6 @@ function ensureBingeAhead() {
     if (bingePromise === task) bingePromise = null;
   });
   return task;
-}
-
-function realNeighbor(delta) {
-  return findRealNeighbor(state.chapters, state.currentId, delta);
 }
 
 function hasAdjacent(delta) {
@@ -819,9 +809,9 @@ async function refreshSaved() {
   }
 }
 
-/** 담을 수 없는 챕터(데모·로컬 파일)는 버튼을 내린다 */
+/** 담을 수 없는 챕터(로컬 파일·붙여넣기)는 버튼을 내린다 */
 function canSave(chapter) {
-  return !!chapter && !chapter.isDemo && (chapter.pages || []).some((p) => p.url?.startsWith('/api/'));
+  return !!chapter && (chapter.pages || []).some((p) => p.url?.startsWith('/api/'));
 }
 
 async function saveOne(chapter, prefix = '') {
@@ -999,6 +989,101 @@ function closeAllModals() {
   document.querySelectorAll('.modal.is-open').forEach((m) => m.classList.remove('is-open'));
 }
 
+/**
+ * 서재에서 화들을 지운다 — 목록·오프라인 바이트·읽은 위치를 한 번에.
+ *
+ * 예전엔 지우는 길이 둘이었다: 책장 카드는 목록+바이트를 지우고, 회차 줄의 ✕ 는
+ * 바이트만 지워서 화는 목록에 그대로 남았다. 읽던 화를 지워도 화면엔 계속 떠 있었다.
+ * 이제 모든 삭제가 여기를 지난다.
+ *
+ * 목록 삭제가 실패하면 아무것도 바꾸지 않고 던진다. 바이트 삭제 실패는 목록이
+ * 이미 지워졌으므로 되돌리지 않고 알려만 준다 (다음 저장 때 고아 바이트로 정리된다).
+ */
+async function removeChapters(ids) {
+  const idSet = new Set(ids);
+  if (idSet.size === 0) return { offlineFailed: false };
+
+  await queueStateWrite(() => deleteCatalogItems([...idSet]));
+
+  catalogEpoch++;
+  nextChapterPrefetch = null;
+  state.chapters = state.chapters.filter((chapter) => !idSet.has(chapter.id));
+  saveRecentChapters(state.chapters);
+  forgetProgress([...idSet]);
+
+  let offlineFailed = false;
+  for (const id of idSet) {
+    if (!state.saved.has(id)) continue;
+    try {
+      await library.deleteChapter(id);
+      state.saved.delete(id);
+    } catch (error) {
+      offlineFailed = true;
+      console.warn(`[서재] ${id} 오프라인 파일 삭제 실패`, error);
+    }
+  }
+
+  // 정주행이 지운 화에 붙어 있으면 끊는다 — 지운 화 다음을 계속 받아오면 안 된다
+  if (bingeEnabled && idSet.has(bingeTailId)) stopBinge();
+
+  // 읽던 화를 지웠으면 남은 화 중 가장 최근 것으로, 없으면 빈 화면으로
+  if (idSet.has(state.currentId)) {
+    if (bingeEnabled) stopBinge();
+    const fallback = state.chapters.find((chapter) => !isAnimeItem(chapter));
+    if (fallback) await openChapter(fallback.id);
+    else showEmptyState();
+  }
+
+  return { offlineFailed };
+}
+
+/** 지우고 결과를 알린다. 성공하면 true */
+async function deleteFromShelf(ids, name) {
+  try {
+    const { offlineFailed } = await removeChapters(ids);
+    toast(
+      offlineFailed
+        ? `삭제했습니다 — ${name}\n일부 오프라인 파일은 지우지 못했습니다.`
+        : `삭제했습니다 — ${name}`,
+      { error: offlineFailed }
+    );
+    return true;
+  } catch (error) {
+    toast(`삭제 실패: ${error.message}`, { error: true });
+    return false;
+  }
+}
+
+/**
+ * 두 번 눌러야 실행되는 삭제 버튼. 첫 탭은 "한 번 더" 로 바뀌고 3초 뒤 풀린다.
+ * 태블릿에서 confirm() 대화상자보다 덜 거슬리면서 스치는 터치로 지워지는 걸 막는다.
+ */
+function makeDeleteButton(className, label, onConfirm) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.textContent = label;
+  let timer = null;
+  button.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!button.classList.contains('is-armed')) {
+      button.classList.add('is-armed');
+      button.textContent = '한 번 더 누르면 삭제';
+      timer = setTimeout(() => {
+        button.classList.remove('is-armed');
+        button.textContent = label;
+      }, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    button.disabled = true;
+    await onConfirm();
+    button.disabled = false;
+  });
+  return button;
+}
+
 /** 서재 막대의 용량·안내 문구를 현황에 맞춘다 */
 function renderLibraryBar() {
   const rows = [...state.saved.values()];
@@ -1028,42 +1113,10 @@ function renderLibraryBar() {
 }
 
 /**
- * sourceUrl 에서 시리즈 키를 뽑는다.
- * 같은 사이트 + 같은 작품 경로를 공유하는 챕터를 한 묶음으로 보기 위한 것.
- * 에피소드 번호 파라미터(no, episode, ep, chapter 등)를 제거하면 시리즈 키가 된다.
+ * 서재를 그린다. 인자를 주면 그 작품(null = 책장)으로 옮기고, 안 주면 보던 화면을 유지한다.
  */
-const EPISODE_PARAM_NAMES = ['no', 'episode', 'ep', 'chapter', 'chap', 'toon'];
-
-function seriesKeyFromUrl(sourceUrl) {
-  if (!sourceUrl) return null;
-  try {
-    const url = new URL(sourceUrl);
-    for (const key of EPISODE_PARAM_NAMES) {
-      url.searchParams.delete(key);
-    }
-    // 경로 끝의 숫자도 제거 (예: /webtoon/12345 → /webtoon/)
-    url.pathname = url.pathname.replace(/\/\d+\/?$/, '/');
-    return `${url.origin}${url.pathname}${url.search}`;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 챕터 제목에서 시리즈명을 추출한다.
- * "작품명 123화", "작품명 - 제12화" 같은 패턴에서 작품명 부분만 뽑는다.
- */
-function seriesNameFromTitle(title) {
-  if (!title) return '기타';
-  // 흔한 패턴: "제목 123화", "제목 - 제12화", "제목 #12", "제목 ep.12"
-  const cleaned = title
-    .replace(/\s*[-–]\s*(제?\s*\d+화|제?\s*\d+[화회]?|ep\.?\s*\d+|#\s*\d+|chapter\s*\d+)\s*$/i, '')
-    .replace(/\s+\d+화?\s*$/, '')
-    .trim();
-  return cleaned || title;
-}
-
-function renderEpisodeList(selectedSeriesTitle = null) {
+function renderEpisodeList(series) {
+  if (series !== undefined) shelfSeries = series;
   renderLibraryBar();
 
   const animeTab = state.currentShelfTab === 'anime';
@@ -1073,11 +1126,11 @@ function renderEpisodeList(selectedSeriesTitle = null) {
   el.tabAnimeShelf.setAttribute('aria-pressed', String(animeTab));
   el.tabComicShelf.onclick = () => {
     state.currentShelfTab = 'comic';
-    renderEpisodeList();
+    renderEpisodeList(null);
   };
   el.tabAnimeShelf.onclick = () => {
     state.currentShelfTab = 'anime';
-    renderEpisodeList();
+    renderEpisodeList(null);
   };
 
   if (el.btnShelfEdit) {
@@ -1094,13 +1147,14 @@ function renderEpisodeList(selectedSeriesTitle = null) {
   );
   const seriesGroups = groupChaptersBySeries(filteredChapters);
 
-  // 특정 시리즈가 선택되었을 때는 회차 텍스트 목록 뷰 렌더링
-  if (selectedSeriesTitle) {
-    const targetGroup = seriesGroups.find((g) => g.seriesTitle === selectedSeriesTitle);
+  // 작품을 열어둔 상태면 회차 목록. 그 작품이 지워져 사라졌으면 책장으로 돌아간다
+  if (shelfSeries) {
+    const targetGroup = seriesGroups.find((g) => g.seriesTitle === shelfSeries);
     if (targetGroup) {
       renderSeriesChaptersView(targetGroup);
       return;
     }
+    shelfSeries = null;
   }
 
   // 기본 상태: E-Book 책장 그리드 렌더링
@@ -1117,6 +1171,10 @@ function renderEpisodeList(selectedSeriesTitle = null) {
     const coverWrapper = document.createElement('div');
     coverWrapper.className = 'shelf-cover-wrapper';
 
+    // 표지 로딩과 편집 모드 표지 새로고침 버튼이 같이 쓴다. 예전엔 loadCoverImage 안에만
+    // 있어서 편집 모드를 켜는 순간 ReferenceError 로 책장 그리기가 통째로 죽었다
+    const referer = group.chapters.find((c) => c.sourceUrl)?.sourceUrl || '';
+
     /**
      * 표지 한 장을 건다. 순서가 곧 우선순위다.
      *   1) 시리즈 대표 표지  2) 서재에 담아둔 첫 컷(네트워크 없어도 보인다)
@@ -1131,7 +1189,6 @@ function renderEpisodeList(selectedSeriesTitle = null) {
       placeholder.appendChild(placeholderTitle);
       coverWrapper.appendChild(placeholder);
 
-      const referer = group.chapters.find((c) => c.sourceUrl)?.sourceUrl || '';
       let srcUrl = null;
       let ownedBlob = false;
 
@@ -1176,11 +1233,6 @@ function renderEpisodeList(selectedSeriesTitle = null) {
 
       // 1. 작품 목록 페이지에서 수집된 시리즈 원본 대표 표지(group.coverUrl 및 group.coverPage) 1순위 적용
       await tryLoad(group.coverUrl || group.coverPage?.originalUrl || group.coverPage?.url);
-
-      // 원피스 샘플 카드이고 온라인 표지 로드가 실패했을 때만 인라인 딜리버리
-      if (!srcUrl && /원피스|one\s*piece/i.test(group.seriesTitle)) {
-        srcUrl = ONE_PIECE_COVER_DATA;
-      }
 
       // 2. 서재에 담아둔 챕터면 저장된 바이트로 — 네트워크가 없어도 책장이 채워진다
       if (!srcUrl) {
@@ -1288,51 +1340,12 @@ function renderEpisodeList(selectedSeriesTitle = null) {
 
     info.append(infoTextWrapper);
 
-    // 편집 모드(isShelfEditMode)일 때만 서재 카드에 🗑️ 삭제 버튼 표시!
+    // 편집 모드에서만 작품째 지우는 버튼
     if (state.isShelfEditMode) {
-      const deleteBtn = document.createElement('button');
-      deleteBtn.type = 'button';
-      deleteBtn.className = 'shelf-card-delete-action';
-      deleteBtn.title = '서재에서 삭제';
-      deleteBtn.innerHTML = '🗑️ 삭제';
-
-      deleteBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-
-        const deleteIds = new Set(group.chapters.map((c) => c.id));
-        try {
-          await queueStateWrite(() => deleteCatalogItems([...deleteIds]));
-        } catch (error) {
-          toast(`서재 삭제 실패: ${error.message}`, { error: true });
-          return;
-        }
-
-        card.remove();
-        state.chapters = state.chapters.filter((c) => !deleteIds.has(c.id));
-        saveRecentChapters(state.chapters);
-
-        let offlineDeleteFailed = false;
-        if (!animeTab) {
-          for (const id of deleteIds) {
-            try {
-              await library.deleteChapter(id);
-              state.saved.delete(id);
-            } catch (error) {
-              offlineDeleteFailed = true;
-              console.warn(`[서재] ${id} 오프라인 파일 삭제 실패`, error);
-            }
-          }
-        }
-        renderLibraryBar();
-        if (offlineDeleteFailed) {
-          toast('목록은 삭제됐지만 일부 오프라인 파일을 지우지 못했습니다.', { error: true });
-        }
-
-        renderEpisodeList();
-      });
-
-      info.append(deleteBtn);
+      info.append(makeDeleteButton('shelf-card-delete-action', '🗑️ 삭제', async () => {
+        const ids = group.chapters.map((chapter) => chapter.id);
+        if (await deleteFromShelf(ids, `${group.seriesTitle} ${ids.length}화`)) renderEpisodeList();
+      }));
     }
 
     card.append(coverWrapper, info);
@@ -1400,7 +1413,7 @@ function renderSeriesChaptersView(group) {
   backBtn.className = 'shelf-back-btn';
   backBtn.innerHTML = `← 책장으로`;
   backBtn.addEventListener('click', () => {
-    renderEpisodeList();
+    renderEpisodeList(null);
   });
 
   const title = document.createElement('h3');
@@ -1410,6 +1423,14 @@ function renderSeriesChaptersView(group) {
   title.textContent = `${group.seriesTitle} (${group.chapters.length}화)`;
 
   header.append(backBtn, title);
+
+  // 편집 모드: 작품 전체 삭제. 회차별 삭제는 각 줄에 붙는다
+  if (state.isShelfEditMode) {
+    header.append(makeDeleteButton('shelf-card-delete-action', '🗑️ 작품 전체 삭제', async () => {
+      const ids = group.chapters.map((chapter) => chapter.id);
+      if (await deleteFromShelf(ids, `${group.seriesTitle} ${ids.length}화`)) renderEpisodeList();
+    }));
+  }
 
   const list = document.createElement('div');
   list.className = 'shelf-ep-list';
@@ -1438,27 +1459,11 @@ function renderSeriesChaptersView(group) {
 
     item.append(info);
 
-    if (savedRow && !anime) {
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'ep-del';
-      delBtn.style.height = '100%';
-      delBtn.style.padding = '0 12px';
-      delBtn.style.borderRadius = 'var(--r-sm)';
-      delBtn.textContent = '✕';
-      delBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        try {
-          await library.deleteChapter(chapter.id);
-          await refreshSaved();
-          renderEpisodeList(group.seriesTitle);
-          toast('서재에서 지웠습니다.');
-        } catch (error) {
-          console.warn('[서재] 오프라인 파일 삭제 실패', error);
-          toast(`오프라인 삭제 실패: ${error.message}`, { error: true });
-        }
-      });
-      item.append(delBtn);
+    if (state.isShelfEditMode) {
+      const label = chapter.parsedEpisodeLabel || chapter.title || '이 화';
+      item.append(makeDeleteButton('shelf-ep-del', '삭제', async () => {
+        if (await deleteFromShelf([chapter.id], `${group.seriesTitle} ${label}`)) renderEpisodeList();
+      }));
     }
 
     item.addEventListener('click', () => {
@@ -1528,81 +1533,6 @@ function renderSeriesChaptersView(group) {
   el.epList.replaceChildren(container);
 }
 
-function buildEpisodeItem(chapter) {
-  const isCurrent = chapter.id === state.currentId;
-  const readTo = readProgress()[chapter.id];
-  const savedRow = state.saved.get(chapter.id);
-
-  const item = document.createElement('div');
-  item.className = `ep-item${isCurrent ? ' is-current' : ''}`;
-
-  const open = document.createElement('button');
-  open.type = 'button';
-  open.className = 'ep-open';
-
-  const info = document.createElement('div');
-  const title = document.createElement('span');
-  title.className = 'ep-title';
-  title.textContent = chapter.title || '제목 없음';
-  const meta = document.createElement('span');
-  meta.className = 'ep-meta';
-  meta.textContent =
-    `${chapter.pages.length}장` +
-    (readTo ? ` · ${readTo}쪽까지 읽음` : '') +
-    (chapter.isDemo ? ' · 데모' : '');
-  info.append(title, meta);
-
-  const tags = document.createElement('span');
-  tags.style.display = 'flex';
-  tags.style.gap = '6px';
-  tags.style.alignItems = 'center';
-  tags.style.flex = 'none';
-
-  // "담김" 딱지는 곧 "서버 없이 읽힘" 이라는 뜻이다 — 가장 중요한 정보라 크게 붙인다
-  if (savedRow) {
-    const badge = document.createElement('span');
-    badge.className = 'ep-badge';
-    badge.textContent = `담김 ${library.formatBytes(savedRow.bytes)}`;
-    tags.append(badge);
-  }
-  if (isCurrent) {
-    const stateTag = document.createElement('span');
-    stateTag.className = 'ep-state';
-    stateTag.textContent = '읽는 중';
-    tags.append(stateTag);
-  }
-
-  open.append(info, tags);
-  open.addEventListener('click', () => {
-    openChapter(chapter.id);
-    closeModal(el.modalEpisodes);
-  });
-  item.append(open);
-
-  if (savedRow) {
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'ep-del';
-    del.title = '서재에서 지우기';
-    del.setAttribute('aria-label', `${chapter.title || '이 화'} 서재에서 지우기`);
-    del.textContent = '✕';
-    del.addEventListener('click', async () => {
-      try {
-        await library.deleteChapter(chapter.id);
-        await refreshSaved();
-        renderEpisodeList();
-        toast('서재에서 지웠습니다.');
-      } catch (error) {
-        console.warn('[서재] 오프라인 파일 삭제 실패', error);
-        toast(`오프라인 삭제 실패: ${error.message}`, { error: true });
-      }
-    });
-    item.append(del);
-  }
-
-  return item;
-}
-
 /* ==================================================================== */
 /* 세그먼트 컨트롤                                                       */
 /* ==================================================================== */
@@ -1624,7 +1554,7 @@ function markSegmented(group, attr, value) {
 }
 
 function applyPaper(paper) {
-  el.viewport.classList.remove('filter-sepia', 'filter-contrast', 'filter-night');
+  el.viewport.classList.remove('filter-amoled', 'filter-sepia', 'filter-contrast', 'filter-night');
   if (paper && paper !== 'none') el.viewport.classList.add(`filter-${paper}`);
 }
 
@@ -1711,7 +1641,7 @@ async function submitImport() {
     return;
   }
 
-  // 페이지 주소 하나 → 서버가 HTML 받아 컷을 찾아온다 (북마클릿 불필요)
+  // 페이지 주소 하나 → HTML 을 받아 컷을 찾아온다
   if (looksLikeSinglePageUrl(raw)) {
     try {
       setBusy(true, '페이지에서 만화 찾는 중…');
@@ -1760,42 +1690,13 @@ async function handleFiles(files) {
       : await UrlHarvester.loadMultipleImageFiles(files);
 
     await addChapter(result, 'local');
-    closeModal(el.modalFiles);
+    closeModal(el.modalImport);
     toast(`${result.pages.length}장 불러왔습니다.`);
   } catch (err) {
     toast(err.message, { error: true });
   } finally {
     setBusy(false);
     el.fileInput.value = '';
-  }
-}
-
-/** 북마클릿이 서버에 올려둔 수집 결과를 받아온다 */
-async function consumePendingImport() {
-  const fromHash = UrlHarvester.parseImportHash(window.location.hash);
-  if (!fromHash) return false;
-
-  // 해시는 한 번만 쓰고 지운다 (새로고침 때 다시 불러오지 않도록)
-  history.replaceState(null, '', window.location.pathname + window.location.search);
-
-  try {
-    setBusy(true, '수집한 만화 받는 중…');
-
-    const harvested = fromHash === 'latest' ? await UrlHarvester.fetchPendingImport() : fromHash;
-
-    if (!harvested) {
-      toast('넘어온 이미지를 찾지 못했습니다. 북마클릿을 다시 눌러주세요.', { error: true });
-      return false;
-    }
-
-    await addChapter(harvested, 'import');
-    toast(`${harvested.pages.length}장 불러왔습니다.`);
-    return true;
-  } catch (err) {
-    toast(err.message, { error: true });
-    return false;
-  } finally {
-    setBusy(false);
   }
 }
 
@@ -1811,53 +1712,6 @@ function showTouchPulse(e) {
   pulse.style.top = `${e.clientY}px`;
   document.body.appendChild(pulse);
   setTimeout(() => pulse.remove(), 400);
-}
-
-let autoNextTimer = null;
-
-function showAutoNextCard() {
-  if (!canGoAdjacent(1)) return;
-  const existing = document.querySelector('.auto-next-card');
-  if (existing) return;
-
-  const nextCh = findRealNeighbor(state.chapters, state.currentId, 1);
-  const nextLabel = nextCh ? nextCh.label : '다음 화';
-
-  const card = document.createElement('div');
-  card.className = 'auto-next-card';
-
-  let countdown = 3;
-  card.innerHTML = `
-    <div class="card-text"><b>${nextLabel}</b>로 이동합니다 (<span id="auto-next-sec">${countdown}</span>초)</div>
-    <div class="card-btns">
-      <button type="button" class="btn-card btn-confirm" id="btn-auto-now">지금 이동</button>
-      <button type="button" class="btn-card btn-cancel" id="btn-auto-cancel">취소</button>
-    </div>
-  `;
-  document.body.appendChild(card);
-
-  const secSpan = card.querySelector('#auto-next-sec');
-
-  autoNextTimer = setInterval(() => {
-    countdown--;
-    if (secSpan) secSpan.textContent = String(countdown);
-    if (countdown <= 0) {
-      clearInterval(autoNextTimer);
-      card.remove();
-      goChapter(1);
-    }
-  }, 1000);
-
-  card.querySelector('#btn-auto-now').addEventListener('click', () => {
-    clearInterval(autoNextTimer);
-    card.remove();
-    goChapter(1);
-  });
-
-  card.querySelector('#btn-auto-cancel').addEventListener('click', () => {
-    clearInterval(autoNextTimer);
-    card.remove();
-  });
 }
 
 function wireEvents() {
@@ -1957,13 +1811,11 @@ function wireEvents() {
 
   /* 모달 열기 */
   el.btnEpList.addEventListener('click', () => {
-    renderEpisodeList();
+    renderEpisodeList(null);
     openModal(el.modalEpisodes);
   });
   el.btnImport.addEventListener('click', () => openModal(el.modalImport));
   el.btnReload.addEventListener('click', () => reloadCurrentChapter());
-  el.btnFiles.addEventListener('click', () => openModal(el.modalFiles));
-  el.btnDisplay.addEventListener('click', () => openModal(el.modalDisplay));
   el.btnSettings.addEventListener('click', () => openModal(el.modalSettings));
 
   /* 모달 닫기 */
@@ -1980,7 +1832,7 @@ function wireEvents() {
   });
 
   /* 빈 상태에서 바로 시작 */
-  document.getElementById('empty-files').addEventListener('click', () => openModal(el.modalFiles));
+  document.getElementById('empty-files').addEventListener('click', () => el.fileInput.click());
   document.getElementById('empty-import').addEventListener('click', () => openModal(el.modalImport));
 
   /* 서재에 담기 & 링크 정리 */
@@ -2017,26 +1869,6 @@ function wireEvents() {
 
   /* 불러오기 */
   el.btnSubmitUrl.addEventListener('click', submitImport);
-
-  el.btnCopyBookmarklet.addEventListener('click', async () => {
-    const code = el.bookmarkletUrl.value;
-    try {
-      await navigator.clipboard.writeText(code);
-    } catch {
-      // 클립보드 권한이 없으면 선택 상태로 만들어 직접 복사하게 한다
-      el.bookmarkletUrl.select();
-    }
-    const label = el.btnCopyBookmarklet.querySelector('span');
-    const icon = el.btnCopyBookmarklet.querySelector('use');
-    label.textContent = '복사됨';
-    icon.setAttribute('href', '#i-check');
-    el.btnCopyBookmarklet.classList.add('is-done');
-    setTimeout(() => {
-      label.textContent = '주소 복사';
-      icon.setAttribute('href', '#i-copy');
-      el.btnCopyBookmarklet.classList.remove('is-done');
-    }, 1800);
-  });
 
   /* 파일 */
   el.dropZone.addEventListener('click', () => el.fileInput.click());
@@ -2177,18 +2009,6 @@ function applySettingsToUI() {
 
   applyPaper(state.settings.paper);
   applyBrightness(state.settings.brightness);
-
-  // 북마크바로 끌어다 놓는 앵커와, 안 될 때 쓰는 복사용 입력칸 둘 다 채운다
-  const bookmarklet = buildBookmarklet(window.location.origin);
-  el.bookmarkletUrl.value = bookmarklet;
-
-  const dragChip = document.getElementById('bookmarklet-drag');
-  dragChip.setAttribute('href', bookmarklet);
-  // 딱지를 그냥 클릭하면 지금 보고 있는 뷰어에서 수집이 돌아버린다 — 끌어다 놓으라고 알려준다
-  dragChip.addEventListener('click', (e) => {
-    e.preventDefault();
-    toast('클릭이 아니라 북마크바로 끌어다 놓으세요 (⌘⇧B 로 북마크바 표시).', { duration: 5000 });
-  });
 }
 
 /**
@@ -2276,6 +2096,7 @@ async function loadCatalogIntoList() {
     await writeMigrationV1(merged);
   }
 
+  // isDemo: 예전 버전이 심어둔 데모 레코드가 남아 있을 수 있다
   state.chapters = (await listCatalogItems()).filter(
     (item) => item?.id && Array.isArray(item.pages) && !item.isDemo
   );
@@ -2330,23 +2151,6 @@ async function bootApp() {
 
   library.requestPersistence().catch(() => {});
   registerServiceWorker();
-
-  window.addEventListener('hashchange', () => {
-    if (/[#&]import=/.test(window.location.hash)) consumePendingImport();
-  });
-
-  const imported = await consumePendingImport().catch(() => null);
-
-  if (!imported && !state.initialized && state.chapters.length === 0) {
-    const onepiece = SAMPLE_MANGA_SERIES.episodes.find((e) => e.id === 'sample-onepiece-909');
-    if (onepiece) {
-      state.chapters = [onepiece];
-      await putCatalogItem(catalogItem(onepiece, true));
-      saveRecentChapters(state.chapters);
-    }
-  }
-  state.initialized = true;
-  saveInitialized(true);
 
   const lastId = readLastChapterId();
   const readableChapters = state.chapters.filter((chapter) => !isAnimeItem(chapter));

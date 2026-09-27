@@ -20,11 +20,10 @@ import { collectRenderedPage } from './platform/pageCollector.js';
 /**
  * 만화 이미지 수집기
  *
- * 들어오는 경로 네 가지:
- *   1. 페이지 주소   서버가 HTML 을 받아 본문 컷을 찾는다 (주력)
- *   2. 북마클릿      브라우저에 이미 렌더된 화면에서 훑는다 (JS 로 채우는 사이트)
- *   3. 붙여넣기      이미지 주소 목록
- *   4. 로컬 파일     CBZ / ZIP / 이미지 여러 장
+ * 들어오는 경로 세 가지:
+ *   1. 페이지 주소   HTML 을 받아 본문 컷을 찾는다. JS 로 채우는 페이지는 WebView 렌더 (주력)
+ *   2. 붙여넣기      이미지 주소 목록
+ *   3. 로컬 파일     CBZ / ZIP / 이미지 여러 장
  *
  * 어느 경로든 산출물은 같은 page 객체 배열이고,
  * 본문 선별 판단은 전부 core/imageRules.js 한 곳에서 한다.
@@ -34,64 +33,12 @@ const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp)(\?|#|$)/i;
 
 export class UrlHarvester {
   /* ------------------------------------------------------------------ */
-  /* 1. 북마클릿이 서버에 올려둔 수집 결과 받기                           */
-  /* ------------------------------------------------------------------ */
-
-  /**
-   * 북마클릿은 목록을 먼저 올리고 뷰어를 열기 때문에 뷰어가 조금 먼저
-   * 뜨는 경우가 있다. 그래서 잠깐 폴링한다.
-   */
-  static async fetchPendingImport({ attempts = 12, intervalMs = 400 } = {}) {
-    for (let i = 0; i < attempts; i++) {
-      try {
-        const res = await fetch('/api/import/latest', { cache: 'no-store' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ok && data.payload) return UrlHarvester.normalizeImportPayload(data.payload);
-        }
-      } catch {
-        /* 서버가 아직 준비 안 됐으면 다음 시도 */
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-    return null;
-  }
-
-  /** URL 해시(#import=...)로 넘어온 페이로드 */
-  static parseImportHash(hash) {
-    const match = /[#&]import=([^&]+)/.exec(hash || '');
-    if (!match) return null;
-    if (match[1] === 'latest') return 'latest';
-    try {
-      return UrlHarvester.normalizeImportPayload(JSON.parse(decodeURIComponent(match[1])));
-    } catch {
-      return null;
-    }
-  }
-
-  static normalizeImportPayload(payload) {
-    const urls = (payload.pages || []).filter(
-      (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
-    );
-    if (urls.length === 0) throw new Error('수집된 이미지가 없습니다.');
-
-    return {
-      title: payload.title || '수집한 만화',
-      coverUrl: payload.coverUrl || null,
-      targetUrl: payload.sourceUrl || null,
-      prevUrl: payload.prevUrl || null,
-      nextUrl: payload.nextUrl || null,
-      pages: toPages(urls, payload.sourceUrl),
-    };
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* 2. 페이지 주소 하나 → 서버가 HTML 받아 본문 컷 추출                  */
+  /* 1. 페이지 주소 하나 → 서버가 HTML 받아 본문 컷 추출                  */
   /* ------------------------------------------------------------------ */
 
   /**
    * 네이버 웹툰처럼 본문 이미지 주소가 HTML 에 그대로 실려 오는 사이트는
-   * 주소 하나만 넣으면 끝난다. 북마클릿을 설치할 필요가 없다.
+   * 주소 하나만 넣으면 끝난다.
    */
   static async fetchFromUrl(
     targetUrl,
@@ -288,7 +235,7 @@ export class UrlHarvester {
    * 그런 페이지를 감지하면 여기로 넘긴다 — 사용자는 주소만 넣으면 된다.
    *
    * 한계: 서버의 브라우저에는 사용자의 로그인 세션이 없다. 로그인이 필요한
-   * 페이지는 여전히 북마클릿(사용자 브라우저)만 가능하다.
+   * 페이지는 Android 앱(로그인 가능한 WebView)에서 연다.
    */
   static async renderFromUrl(targetUrl, { silent = false } = {}) {
     let body = null;
@@ -310,37 +257,24 @@ export class UrlHarvester {
 
       /**
        * 헤드리스가 아예 없는 환경이 둘 있다 — Cloudflare Worker 에는 브라우저가 없고,
-       * 태블릿(Termux)에는 Chrome 을 못 깐다. "Chrome 을 설치하세요"는 그 환경에서
-       * 할 수 없는 일이라 안내가 아니다. 그 자리에서 되는 길(북마클릿)을 알려준다.
-       *
-       * Worker 는 needsBookmarklet 을 명시해 준다. Node 서버는 문구로 판별한다.
+       * 태블릿(Termux)에는 Chrome 을 못 깐다. 그 자리에서 되는 길은 Android 앱이다
+       * (앱은 WebView 로 직접 렌더한다). Worker 는 그 문구를 실어 보낸다.
        */
-      if (body && body.needsBookmarklet) {
-        // 서버가 이미 할 수 있는 일을 적어 보냈다. 그 문구를 그대로 쓴다
-        const err = new Error(reason);
-        err.needsBookmarklet = true;
-        throw err;
-      }
-
       if (/브라우저를 띄우지 못했습니다/.test(reason)) {
-        const err = new Error(
+        throw new Error(
           '이 사이트는 이미지를 나중에 불러오는데, 이 기기에서는 서버가 대신 열어볼 수 없습니다.\n' +
-            '불러오기 창의 북마클릿을 쓰세요 — 브라우저에서 그 만화를 열고 북마클릿을 누르면 됩니다.'
+            'Android 앱에서 열어 주세요 — 앱은 페이지를 직접 렌더해서 컷을 찾습니다.'
         );
-        err.needsBookmarklet = true;
-        throw err;
       }
 
       throw new Error(reason);
     }
 
     if (!body.pages || body.pages.length === 0) {
-      const err = new Error(
+      throw new Error(
         '브라우저로 열어봤지만 이미지를 찾지 못했습니다.\n' +
-          '로그인이 필요한 페이지라면 북마클릿을 쓰세요 (서버에는 로그인 세션이 없습니다).'
+          '로그인이 필요한 페이지라면 Android 앱에서 로그인한 뒤 열어 주세요.'
       );
-      err.needsBookmarklet = true;
-      throw err;
     }
 
     const sourceUrl = body.sourceUrl || targetUrl;

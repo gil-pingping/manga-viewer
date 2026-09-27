@@ -115,7 +115,7 @@ function linkDirectory(href) {
 /**
  * 이름 주의: imageRules.js 의 keepDominantDirectory 와 같은 이름을 쓰면 안 된다.
  * 같은 청크로 번들되면 한쪽이 "이름 뒤에 $1" 로 리네임되는데, 문자열화되어
- * 북마클릿·WebView 에 실리는 수집 함수 본문이 그 리네임된 이름을 부르면
+ * WebView 에 주입되는 수집 함수 본문이 그 리네임된 이름을 부르면
  * 주입 스코프에 없어 ReferenceError 가 난다 (v1.4.2 실사고 — 기기 수집 전멸).
  */
 function keepDominantEpisodeDir(entries) {
@@ -307,13 +307,8 @@ export function cleanSeriesName(name) {
 export function groupChaptersBySeries(chapters) {
   const groups = new Map();
 
-  const filtered = (chapters || []).filter((c) => {
-    if (!c) return false;
-    if (c.isDemo) return false;
-    if (c.id?.startsWith('demo-')) return false;
-    if (c.title?.includes('DEMO') || c.title?.includes('세로 스크롤 웹툰') || c.title?.includes('페이지 넘김')) return false;
-    return true;
-  });
+  // 예전 버전이 심어둔 데모 레코드만 거른다. 제목으로 거르면 진짜 작품이 사라진다
+  const filtered = (chapters || []).filter((c) => c && !c.isDemo && !c.id?.startsWith('demo-'));
 
   for (const chapter of filtered) {
     const parsed = parseSeriesAndEpisode(chapter.title || '');

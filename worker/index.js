@@ -353,17 +353,15 @@ async function handleAnilifeStream(request) {
 /**
  * Worker 에는 브라우저가 없다.
  *
- * Browser Rendering 은 유료 기능이라 무료 배포에서는 쓸 수 없다. 태블릿의
- * Termux 도 Chrome 을 못 깐다 — 같은 한계다. 사용자가 그 자리에서 할 수 있는
- * 일(북마클릿)을 알려주는 것이 유일하게 쓸모 있는 응답이다.
+ * Browser Rendering 은 유료 기능이라 무료 배포에서는 쓸 수 없다. 그런 페이지는
+ * Android 앱(WebView 직접 렌더)에서 열라고 알려주는 것이 유일하게 쓸모 있는 응답이다.
  */
 function handleRenderPage() {
   return json(501, {
     ok: false,
-    needsBookmarklet: true,
     error:
       '이 사이트는 이미지를 나중에 불러오는데, 여기서는 서버가 대신 열어볼 수 없습니다.\n' +
-      '불러오기 창의 북마클릿을 쓰세요 — 브라우저에서 그 만화를 열고 북마클릿을 누르면 됩니다.',
+      'Android 앱에서 열어 주세요 — 앱은 페이지를 직접 렌더해서 컷을 찾습니다.',
   });
 }
 

@@ -1,7 +1,7 @@
 /**
- * 북마클릿 조립 점검.
+ * Android WebView 주입 수집기 조립 점검.
  *
- * 북마클릿은 import 를 못 쓰기 때문에 core 함수들을 문자열화해서 싣는다.
+ * 주입 스크립트는 import 를 못 쓰기 때문에 core 함수들을 문자열화해서 싣는다.
  * 그 조립이 (1) 유효한 JS 인지, (2) 직렬화된 규칙이 core 와 똑같이
  * 동작하는지 확인한다.
  *
@@ -10,7 +10,6 @@
  */
 import assert from 'node:assert/strict';
 import {
-  buildBookmarklet,
   buildNativeCollectorScript,
   BUNDLED,
   bundledConstants,
@@ -26,28 +25,13 @@ function check(name, fn) {
   console.log(`  ok  ${name}`);
 }
 
-const ORIGIN = 'http://localhost:5173';
-const bookmarklet = buildBookmarklet(ORIGIN);
-const decoded = decodeURIComponent(bookmarklet.replace(/^javascript:/, ''));
+const decoded = buildNativeCollectorScript('https://reader.test/chapter/1');
 
-console.log('북마클릿 조립');
+console.log('주입 스크립트 조립');
 
-check('javascript: 로 시작한다', () => {
-  assert.ok(bookmarklet.startsWith('javascript:'));
-});
-
-check('뷰어 주소가 박혀 있다', () => {
-  assert.ok(decoded.includes(JSON.stringify(ORIGIN)));
-});
-
-check('조립 결과가 유효한 JS 다', () => {
+check('Android WebView 수집기는 자기완결적 JS 다', () => {
   assert.doesNotThrow(() => new Function(decoded));
-});
-
-check('Android WebView 수집기도 자기완결적 JS 다', () => {
-  const script = buildNativeCollectorScript();
-  assert.doesNotThrow(() => new Function(script));
-  assert.doesNotMatch(script, /\bexport\s+/);
+  assert.doesNotMatch(decoded, /\bexport\s+/);
 });
 
 check('Android WebView 수집 오류가 진단값으로 돌아온다', () => {
@@ -119,22 +103,22 @@ check('모듈 스코프를 참조하지 않는다', () => {
 console.log('\n직렬화된 규칙 == core 규칙');
 
 /**
- * 북마클릿에 실린 코드만 떼어내 selectContentImages 를 되살린다.
- * 실제 북마클릿이 페이지에서 겪는 것과 같은 조건(모듈 없음)이다.
+ * 주입 스크립트에 실린 코드만 떼어내 selectContentImages 를 되살린다.
+ * 실제 WebView 주입이 페이지에서 겪는 것과 같은 조건(모듈 없음)이다.
  */
-function reviveSelectFromBookmarklet() {
+function reviveSelectFromInjected() {
   const fns = serializeBundledFunctions();
   const src = `${bundledConstants()}\n${fns}\nreturn selectContentImages;`;
   return new Function(src)();
 }
 
-const revived = reviveSelectFromBookmarklet();
+const revived = reviveSelectFromInjected();
 
 for (const fixture of ALL_FIXTURES) {
   check(`${fixture.label}: 두 경로 결과가 같다`, () => {
     const fromCore = selectContentImages(fixture.elements, fixture.pageUrl);
-    const fromBookmarklet = revived(fixture.elements, fixture.pageUrl);
-    assert.deepEqual(fromBookmarklet, fromCore);
+    const fromInjected = revived(fixture.elements, fixture.pageUrl);
+    assert.deepEqual(fromInjected, fromCore);
     assert.ok(fromCore.length > 0, '선별 결과가 비어 있으면 비교가 무의미하다');
   });
 }

@@ -24,7 +24,6 @@
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.8 1.8"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.8-1.8"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h3.2l1.8 2.2H18a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></symbol>
-    <symbol id="i-display" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M4.2 7.5l2.2 1.3M17.6 15.2l2.2 1.3M4.2 16.5l2.2-1.3M17.6 8.8l2.2-1.3"/></symbol>
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></symbol>
     <symbol id="i-next" viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></symbol>
@@ -35,8 +34,6 @@
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
     <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.7-4.7"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
-    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5H6A1.5 1.5 0 0 0 4.5 7v9"/></symbol>
-    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4.5 4.5L19 7"/></symbol>
     <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M8 8l4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 3.5V8h-4.5"/></symbol>
   </svg>
@@ -55,7 +52,7 @@
           <svg class="ico"><use href="#i-folder"/></svg><span>CBZ · 이미지 열기</span>
         </button>
         <button class="btn" id="empty-import" type="button">
-          <svg class="ico"><use href="#i-link"/></svg><span>주소 붙여넣기 · 북마클릿</span>
+          <svg class="ico"><use href="#i-link"/></svg><span>주소 붙여넣기</span>
         </button>
       </div>
       <div style="margin-top: 12px;"><span class="ota-tag" id="empty-ota-tag">OTA...</span></div>
@@ -86,12 +83,6 @@
           </button>
           <button class="icon-btn" id="btn-reload" type="button" title="이 화의 이미지를 원본에서 다시 받아온다">
             <svg class="ico"><use href="#i-refresh"/></svg><span>다시수집</span>
-          </button>
-          <button class="icon-btn" id="btn-files" type="button">
-            <svg class="ico"><use href="#i-folder"/></svg><span>파일</span>
-          </button>
-          <button class="icon-btn" id="btn-display" type="button">
-            <svg class="ico"><use href="#i-display"/></svg><span>화면</span>
           </button>
           <button class="icon-btn" id="btn-settings" type="button">
             <svg class="ico"><use href="#i-settings"/></svg><span>설정</span>
@@ -166,57 +157,24 @@
               spellcheck="false" autocomplete="off"></textarea>
             <p class="hint">
               웹툰·만화 <b>페이지 주소</b>를 그대로 넣으면 알아서 컷을 찾아온다.
-              이미지 주소를 여러 줄로 붙여도 된다.
+              이미지 주소를 여러 줄로 붙여도 되고, 애니라이프 watch 주소는 애니 서재에 담긴다.
             </p>
           </section>
 
-          <details class="fallback">
-            <summary>주소로 안 잡히는 사이트라면 (북마클릿)</summary>
-            <p class="hint">
-              이미지를 자바스크립트로 나중에 채우는 사이트는 서버가 받는 HTML 에 주소가 없다.
-              그때는 브라우저에서 보던 화면을 그대로 넘기는 북마클릿을 쓴다.
-            </p>
-            <ol class="steps">
-              <li>북마크바를 켠다 (맥: <b>⌘⇧B</b>).</li>
-              <li>아래 딱지를 <b>북마크바로 끌어다 놓는다</b>.</li>
-              <li>그 페이지에서 끝까지 스크롤한 뒤 북마크를 누른다.</li>
-            </ol>
-            <a class="drag-chip" id="bookmarklet-drag" href="#" draggable="true">
-              <svg class="ico"><use href="#i-link"/></svg><span>만화 뷰어로 보내기</span>
-            </a>
-            <div class="row">
-              <input type="text" id="bookmarklet-url" class="field mono" readonly>
-              <button class="btn" id="btn-copy-bookmarklet" type="button">
-                <svg class="ico"><use href="#i-copy"/></svg><span>주소 복사</span>
-              </button>
-            </div>
-            <p class="hint">직접 복사할 땐 북마크의 <b>주소(URL)</b> 칸에 붙여넣기. 주소창에 붙이면 사파리가 <code>javascript:</code>를 지운다.</p>
-          </details>
+          <section class="block">
+            <label class="label">파일</label>
+            <button class="dropzone" id="drop-zone" type="button">
+              <svg class="ico ico-lg"><use href="#i-upload"/></svg>
+              <b>CBZ · ZIP · 이미지 여러 장</b>
+              <span class="hint">눌러서 고르거나 끌어다 놓기</span>
+            </button>
+            <input type="file" id="file-input" accept=".zip,.cbz,image/*" multiple hidden>
+          </section>
         </div>
 
         <div class="sheet-foot">
           <button class="btn close-modal" type="button">취소</button>
           <button class="btn btn-primary" id="btn-submit-url" type="button">불러오기</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 로컬 파일 -->
-    <div class="modal" id="modal-files">
-      <div class="sheet">
-        <div class="sheet-head">
-          <h2>로컬 파일</h2>
-          <button class="close-btn close-modal" type="button" aria-label="닫기">
-            <svg class="ico"><use href="#i-close"/></svg>
-          </button>
-        </div>
-        <div class="sheet-body">
-          <button class="dropzone" id="drop-zone" type="button">
-            <svg class="ico ico-lg"><use href="#i-upload"/></svg>
-            <b>CBZ · ZIP · 이미지 여러 장</b>
-            <span class="hint">여기에 끌어다 놓거나 눌러서 고르기</span>
-          </button>
-          <input type="file" id="file-input" accept=".zip,.cbz,image/*" multiple hidden>
         </div>
       </div>
     </div>
@@ -283,11 +241,11 @@
       </div>
     </div>
 
-    <!-- 화면 (보기 모드 · 필터) -->
-    <div class="modal" id="modal-display">
+    <!-- 설정 -->
+    <div class="modal" id="modal-settings">
       <div class="sheet">
         <div class="sheet-head">
-          <h2>화면</h2>
+          <h2>설정</h2>
           <button class="close-btn close-modal" type="button" aria-label="닫기">
             <svg class="ico"><use href="#i-close"/></svg>
           </button>
@@ -319,20 +277,7 @@
               <button type="button" data-paper="night">야간</button>
             </div>
           </section>
-        </div>
-      </div>
-    </div>
 
-    <!-- 설정 -->
-    <div class="modal" id="modal-settings">
-      <div class="sheet">
-        <div class="sheet-head">
-          <h2>설정</h2>
-          <button class="close-btn close-modal" type="button" aria-label="닫기">
-            <svg class="ico"><use href="#i-close"/></svg>
-          </button>
-        </div>
-        <div class="sheet-body">
           <section class="block">
             <label class="label">읽기 방향</label>
             <div class="segmented" id="dir-group" role="group">

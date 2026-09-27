@@ -81,7 +81,8 @@ try {
   const page = await context.newPage();
   const origin = vite.resolvedUrls.local[0].replace(/\/$/, '');
   await page.goto(origin);
-  await page.locator('#modal-episodes .close-modal').click();
+  // 새 프로필은 빈 서재로 부팅한다 (샘플 없음). 부팅이 끝난 뒤 가짜 웹툰 면을 깐다
+  await page.waitForSelector('#app.is-empty');
 
   await page.evaluate(() => {
     document.getElementById('app').classList.remove('is-empty');
