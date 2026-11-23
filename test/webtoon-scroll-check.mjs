@@ -406,7 +406,39 @@ try {
   });
   assert.equal(wheelBurstCalls, 1, 'idle 뒤 bottom wheel burst는 다음 화를 한 번만 열어야 한다');
 
-  console.log('webtoon scroll: 반복 입력 + 앵커 + 연속 화 + bottom 추가 swipe/wheel 통과');
+  // 페이지 넘김 효과는 화면에 남는 새 stage 에 붙어야 한다.
+  // 예전엔 render() 전에 걸어서 곧 버려질 옛 stage 에 붙었고, 효과가 한 번도 안 보였다.
+  const transitionResult = await page.evaluate(async () => {
+    document.body.replaceChildren();
+    const container = document.createElement('main');
+    container.className = 'manga-viewport';
+    container.style.height = '100vh';
+    document.body.appendChild(container);
+    const { ReaderEngine } = await import('/src/readerEngine.js');
+    const out = {};
+    for (const type of ['slide', 'fade', 'none']) {
+      const engine = new ReaderEngine({
+        container,
+        mode: 'single',
+        transitionType: type,
+        resolvePageUrl: () => new Promise(() => {}),
+      });
+      engine.loadChapter({ pages: Array.from({ length: 5 }, (_, i) => ({ url: `p${i}`, pageNumber: i + 1 })) }, 2);
+      engine.nextPage();
+      const afterNext = container.querySelector('.manga-page-stage')?.className || '';
+      engine.prevPage();
+      const afterPrev = container.querySelector('.manga-page-stage')?.className || '';
+      out[type] = { afterNext, afterPrev };
+      engine.destroy?.();
+    }
+    return out;
+  });
+  assert.match(transitionResult.slide.afterNext, /anim-slide-next/, '슬라이드: 다음 장 효과가 보이는 stage 에 붙어야 한다');
+  assert.match(transitionResult.slide.afterPrev, /anim-slide-prev/, '슬라이드: 이전 장 효과');
+  assert.match(transitionResult.fade.afterNext, /anim-fade/, '페이드 효과');
+  assert.doesNotMatch(transitionResult.none.afterNext, /anim-/, '없음은 효과가 없어야 한다');
+
+  console.log('webtoon scroll: 반복 입력 + 앵커 + 연속 화 + bottom 추가 swipe/wheel + 넘김 효과 통과');
 } finally {
   await browser?.close();
   await vite.close();

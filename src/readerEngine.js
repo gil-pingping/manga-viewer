@@ -427,8 +427,8 @@ export class ReaderEngine {
       return;
     }
     this.currentIndex = target;
-    this.triggerAnimation('next');
     this.render();
+    this.triggerAnimation('next');
   }
 
   prevPage() {
@@ -450,8 +450,8 @@ export class ReaderEngine {
     if (target === null) return;
 
     this.currentIndex = target;
-    this.triggerAnimation('prev');
     this.render();
+    this.triggerAnimation('prev');
   }
 
   /**
@@ -629,6 +629,11 @@ export class ReaderEngine {
     this.render();
   }
 
+  /**
+   * 넘김 효과는 render() **뒤에** 건다. renderPaged 가 새 stage 를 만들어 갈아끼우므로
+   * 앞에서 걸면 효과가 곧 버려질 옛 stage 에 붙는다 — 예전엔 그래서 슬라이드·페이드가
+   * 한 번도 보이지 않았다.
+   */
   triggerAnimation(direction) {
     if (this.transitionType === 'none') return;
     const stage = this.container.querySelector('.manga-page-stage');

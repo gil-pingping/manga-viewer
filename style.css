@@ -293,30 +293,40 @@ button {
   filter: brightness(0.72) contrast(1.06) sepia(0.14);
 }
 
-/* 페이지 넘김 효과 */
+/* 페이지 넘김 효과 — 한 장·두 장 모드에서만. 세로 스크롤은 스크롤 자체가 넘김이다.
+ * 예전 값(5% 이동·0.22초)은 태블릿에서 알아보기 힘들 만큼 약했다. */
 .anim-slide-next {
-  animation: slide-next 0.22s cubic-bezier(0.22, 0.7, 0.3, 1);
+  animation: slide-next 0.28s cubic-bezier(0.22, 0.7, 0.3, 1);
 }
 
 .anim-slide-prev {
-  animation: slide-prev 0.22s cubic-bezier(0.22, 0.7, 0.3, 1);
+  animation: slide-prev 0.28s cubic-bezier(0.22, 0.7, 0.3, 1);
+}
+
+/* 오른쪽→왼쪽(일본 만화)은 다음 장이 왼쪽에서 들어온다 */
+.dir-rtl .anim-slide-next {
+  animation-name: slide-prev;
+}
+
+.dir-rtl .anim-slide-prev {
+  animation-name: slide-next;
 }
 
 .anim-fade {
-  animation: fade-in 0.2s ease;
+  animation: page-fade 0.3s ease;
 }
 
 @keyframes slide-next {
   from {
-    transform: translateX(5%);
-    opacity: 0.35;
+    transform: translateX(22%);
+    opacity: 0.15;
   }
 }
 
 @keyframes slide-prev {
   from {
-    transform: translateX(-5%);
-    opacity: 0.35;
+    transform: translateX(-22%);
+    opacity: 0.15;
   }
 }
 
@@ -326,12 +336,15 @@ button {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .anim-slide-next,
-  .anim-slide-prev,
-  .anim-fade {
-    animation: none;
+@keyframes page-fade {
+  from {
+    opacity: 0;
   }
+}
+
+/* 넘김 효과는 끄지 않는다 — 설정에서 사용자가 직접 고른 값이다(끄려면 "없음").
+ * 예전엔 여기서 꺼서, 기기의 "애니메이션 줄이기"가 켜져 있으면 어떤 값을 골라도 효과가 없었다. */
+@media (prefers-reduced-motion: reduce) {
   .manga-viewport.mode-strip {
     scroll-behavior: auto;
   }
