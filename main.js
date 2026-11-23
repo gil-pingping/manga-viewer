@@ -41,6 +41,7 @@ import {
   finishStartupAndApplyUpdate,
   getCurrentBundleId,
 } from './src/platform/liveUpdate.js';
+import { createImageWarmup } from './src/platform/imageWarmup.js';
 import { APP_VERSION, BUILD_TIME } from './src/version.js';
 import {
   createInitialState,
@@ -114,6 +115,12 @@ let bingePromise = null;
 let chapterNavigationBusy = false;
 let animePlayer = null;
 let animePlaySequence = 0;
+/** 다음 화 첫 컷 미리 받기 (한 장·두 장 모드 화 경계의 로딩을 없앤다) */
+const imageWarmup = createImageWarmup(resolvePageImageUrl);
+/** 이 화까지 남은 장수가 이 이하면 다음 화 첫 컷을 받아둔다 */
+const WARM_NEXT_WITHIN_PAGES = 6;
+const WARM_NEXT_PAGE_COUNT = 4;
+let warmedForChapterId = null;
 /** 서재에서 지울 때마다 오른다. 그 전에 시작한 미리 받기 결과는 버린다 */
 let catalogEpoch = 0;
 /** 서재에서 열어둔 작품 (null = 책장). 편집·삭제 뒤 다시 그려도 같은 화면에 머문다 */
@@ -402,9 +409,18 @@ async function openChapter(chapterId, pageNumber) {
   // 다음 화 미리 받기를 먼저 건다. loadChapter 가 동기적으로 onPageChange 를 부르고 정주행이
   // 그 안에서 미리 받기를 찾는다 — 뒤에 걸면 같은 화를 두 번 수집하고 한쪽이 거절당한다.
   prefetchNextChapter(chapter);
+  warmedForChapterId = null; // 다시 연 화도 끝 근처에서 다음 화를 다시 받아둔다
   engine.loadChapter(forEngine, startAt);
-  preloadChapterImages(forEngine);
+  preloadBrowserImages(forEngine);
   if (bingeEnabled) ensureBingeAhead();
+}
+
+/**
+ * 웹판 전용 이미지 예열. APK 는 컷을 네이티브 HTTP 로 받으므로 `/api/proxy-image`
+ * 주소를 <img> 로 부르면 받아줄 서버가 없어 헛요청만 된다 — 그쪽은 imageWarmup 이 맡는다.
+ */
+function preloadBrowserImages(chapter) {
+  if (!isNativeApp()) preloadChapterImages(chapter);
 }
 
 /** 다음 화 HTML/컷 목록만 조용히 미리 수집하여 다음 화 전환 속도를 극대화한다. */
@@ -424,11 +440,44 @@ function prefetchNextChapter(chapter) {
     .then((harvested) => harvested?.pages?.length && epoch === catalogEpoch
       ? storeHarvestedChapter(harvested, 'prefetch', chapter)
       : null)
+    .then((stored) => {
+      // 컷 목록이 늦게 왔는데 이미 화 끝 근처면 지금 첫 컷을 받는다
+      const info = engine?.getPageInfo();
+      if (stored && info?.chapterId === chapter.id && warmedForChapterId === chapter.id) {
+        warmedForChapterId = null;
+        warmNextChapter(chapter.id, info);
+      }
+      return stored;
+    })
     .catch((err) => {
       console.debug('[다음 화 미리 받기] 클릭할 때 다시 시도합니다.', err.message);
       return null;
     });
   nextChapterPrefetch = { sourceId: chapter.id, url: chapter.nextUrl, promise };
+}
+
+/**
+ * 화 끝이 가까우면 다음 화 첫 컷을 미리 받는다.
+ *
+ * 컷 목록(미리 받기)만으로는 부족하다 — 한 장·두 장 모드는 다음 화를 새로 열 때 첫 컷을
+ * 그제서야 네이티브로 받아서 화 경계마다 로딩이 보였다. 세로 스크롤 정주행은 다음 화를
+ * 아래에 붙여 미리 받으므로 원래 매끄러웠다. 담아둔 화는 바이트가 기기에 있어 건너뛴다.
+ */
+async function warmNextChapter(ownerId, info) {
+  if (!ownerId || info.totalPages - info.currentPageNum > WARM_NEXT_WITHIN_PAGES) return;
+  if (warmedForChapterId === ownerId) return;
+  warmedForChapterId = ownerId;
+
+  const move = resolveAdjacent(state.chapters, ownerId, 1);
+  let next = move.kind === 'open' ? move.chapter : null;
+  if (move.kind === 'fetch') {
+    const prepared = findAdjacentPrefetch(nextChapterPrefetch, ownerId, 1, move.url);
+    next = prepared ? await prepared.catch(() => null) : null;
+  }
+  // 기다리는 사이 다른 화로 옮겼으면 이 예측은 버린다
+  if (!next?.pages?.length || warmedForChapterId !== ownerId || isAnimeItem(next)) return;
+  if (state.saved.has(next.id)) return;
+  imageWarmup.warm(next.pages.slice(0, WARM_NEXT_PAGE_COUNT));
 }
 
 /**
@@ -713,7 +762,7 @@ function ensureBingeAhead() {
     }
 
     if (offline) state.objectUrls.push(...offline);
-    preloadChapterImages(forEngine);
+    preloadBrowserImages(forEngine);
 
     // Offline Blob URLs retain backing bytes until revoked. Keep one seamless
     // handoff only; normal next-episode navigation then releases prior URLs.
@@ -889,7 +938,7 @@ function initEngine() {
     mode: state.settings.mode,
     direction: state.settings.direction,
     transitionType: state.settings.transition,
-    resolvePageUrl: resolvePageImageUrl,
+    resolvePageUrl: (page) => imageWarmup.resolve(page),
 
     onPageChange: (info) => {
       const ownerId = info.chapterId || state.currentId;
@@ -911,6 +960,7 @@ function initEngine() {
       }
 
       if (bingeEnabled && ownerId === bingeTailId) ensureBingeAhead();
+      warmNextChapter(ownerId, info);
     },
 
     onZoomChange: (zoomed) => {
@@ -1007,6 +1057,8 @@ async function removeChapters(ids) {
 
   catalogEpoch++;
   nextChapterPrefetch = null;
+  warmedForChapterId = null;
+  imageWarmup.clear();
   state.chapters = state.chapters.filter((chapter) => !idSet.has(chapter.id));
   saveRecentChapters(state.chapters);
   forgetProgress([...idSet]);
